@@ -2,8 +2,6 @@
 
 MAGMA is a professional blob detection to MIDI conversion system that transforms motion detected from a webcam or video file into musical output. Using computer vision to track moving objects, MAGMA maps their position, size, and speed to MIDI notes, velocities, and modulation parameters in real-time.
 
-![MAGMA Interface](https://via.placeholder.com/800x450/1a1a1a/9C27B0?text=MAGMA+MIDI+Generator)
-
 ## Overview
 
 MAGMA bridges the gap between physical motion and digital music creation. Whether you are a performer looking for an interactive instrument, an installation artist seeking responsive audio, or simply experimenting with motion-to-sound mapping, MAGMA provides a flexible and powerful platform. The application processes video input through OpenCV's background subtraction algorithms to identify moving blobs, then maps each blob's characteristics to musical parameters across multiple MIDI channels.
