@@ -58,21 +58,64 @@ NOTES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 NOTE_NAMES_FLAT = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
 
 SCALES = {
+    # Basic Scales
     "Major": [0, 2, 4, 5, 7, 9, 11],
     "Minor": [0, 2, 3, 5, 7, 8, 10],
+    "Harmonic Minor": [0, 2, 3, 5, 7, 8, 11],
+    "Melodic Minor": [0, 2, 3, 5, 7, 9, 11],
+
+    # Pentatonic Scales
     "Minor Pentatonic": [0, 3, 5, 7, 10],
     "Major Pentatonic": [0, 2, 4, 7, 9],
+    "Blues Scale": [0, 3, 5, 6, 7, 10],
+
+    # Church Modes
     "Dorian": [0, 2, 3, 5, 7, 9, 10],
+    "Phrygian": [0, 1, 3, 5, 7, 8, 10],
     "Lydian": [0, 2, 4, 6, 7, 9, 11],
     "Mixolydian": [0, 2, 4, 5, 7, 9, 10],
-    "Phrygian": [0, 1, 3, 5, 7, 8, 10],
+    "Aeolian": [0, 2, 3, 5, 7, 8, 10],          # Natural minor
+    "Locrian": [0, 1, 3, 5, 6, 8, 10],
+
+    # Exotic Scales
+    "Phrygian Dominant": [0, 1, 4, 5, 7, 8, 10],  # Spanish/flamenco scale
+    "Double Harmonic": [0, 1, 4, 5, 7, 8, 11],    # Byzantine/Arabic scale
+    "Hungarian Minor": [0, 2, 3, 6, 7, 8, 11],
+    "Japanese": [0, 1, 5, 7, 8],                  # In scale/Hirajoshi
+    "Whole Tone": [0, 2, 4, 6, 8, 10],
+    "Diminished": [0, 2, 3, 5, 6, 8, 9, 11],     # Half-whole diminished
+    "Chromatic": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
 }
 
 CHORD_MASKS = {
     "Full Scale": [0, 1, 2, 3, 4, 5, 6],
+
+    # Basic Triads
     "Triad (1-3-5)": [0, 2, 4],
-    "Seventh (1-3-5-7)": [0, 2, 4, 6],
     "Open 5ths (1-5)": [0, 4],
+    "Sus2 (1-2-5)": [0, 1, 4],
+    "Sus4 (1-4-5)": [0, 3, 4],
+
+    # Seventh Chords
+    "Seventh (1-3-5-7)": [0, 2, 4, 6],
+    "Add6 (1-3-5-6)": [0, 2, 4, 5],
+    "Add9 (1-3-5-9)": [0, 2, 4, 1],             # Note: wraps to next octave
+
+    # Extended Chords
+    "9th Chord (1-3-5-7-9)": [0, 2, 4, 6, 1],
+    "11th Chord (1-3-5-7-11)": [0, 2, 4, 6, 3],
+
+    # Intervals
+    "Root Only": [0],
+    "Octaves (1-8)": [0, 0],                     # Will span octaves
+    "Perfect 4ths": [0, 3],
+    "Perfect 5ths": [0, 4],
+
+    # Sparse Patterns
+    "1-3 Only": [0, 2],
+    "1-5-7": [0, 4, 6],
+    "Odd Degrees (1-3-5-7)": [0, 2, 4, 6],
+    "Even Degrees (2-4-6)": [1, 3, 5],
 }
 
 SIZE_PRESETS = {
@@ -84,6 +127,16 @@ SIZE_PRESETS = {
 }
 
 ACCENT_CHANNEL = 15
+
+# Drone note patterns (scale degree indices for auto mode)
+# These patterns are guaranteed to sound musical together
+DRONE_PATTERNS = {
+    "Up": [0, 1, 2, 3],         # Ascending: 1 -> 2 -> 3 -> 4
+    "Down": [3, 2, 1, 0],       # Descending: 4 -> 3 -> 2 -> 1
+    "Up-Down": [0, 1, 2, 3, 2, 1],  # Up then down (will use first 4)
+    "Down-Up": [3, 2, 1, 0, 1, 2],  # Down then up (will use first 4)
+    "Random": "random"          # Random order (special handling)
+}
 
 # State-based blob colors (BGR format for OpenCV)
 BLOB_COLOR_OFF = (0, 255, 0)        # Green - detected, idle
@@ -136,7 +189,7 @@ def name_to_note(note_name: str) -> int:
             octave_part = note_name[1:]
     else:
         note_part = note_name[0]
-        octave_part = "4"
+        octave_part = "0"
     
     try:
         if note_part in NOTES:
@@ -146,7 +199,7 @@ def name_to_note(note_name: str) -> int:
         else:
             note_idx = 0
         
-        octave = int(octave_part) if octave_part else 4
+        octave = int(octave_part) if octave_part else 0
         return (octave + 1) * 12 + note_idx
     except (ValueError, IndexError):
         return 60
@@ -318,6 +371,10 @@ class ChannelConfig:
         # CC Modulation smoothing (laziness)
         self.cc_smoothing = 0.5               # Smoothing factor 0.0-1.0 (0=instant, 1=very lazy, default=50%)
 
+        # Sustain pedal settings
+        self.sustain_enabled = False          # Enable sustain pedal (CC64)
+        self.sustain_duration = 500           # Sustain pedal duration in milliseconds
+
         # Arpeggiator settings
         self.arp_mode = "OFF"                 # Arpeggiator mode: OFF, UP, DOWN, UP-DOWN, RANDOM
 
@@ -381,6 +438,8 @@ class ChannelConfig:
             "min_note_duration": self.min_note_duration,
             "duration_deviation": self.duration_deviation,
             "cc_smoothing": self.cc_smoothing,
+            "sustain_enabled": self.sustain_enabled,
+            "sustain_duration": self.sustain_duration,
             "arp_mode": self.arp_mode
         }
 
@@ -427,8 +486,108 @@ class ChannelConfig:
         ch.min_note_duration = data.get("min_note_duration", 0)
         ch.duration_deviation = data.get("duration_deviation", 0)
         ch.cc_smoothing = data.get("cc_smoothing", 0.5)
+        ch.sustain_enabled = data.get("sustain_enabled", False)
+        ch.sustain_duration = data.get("sustain_duration", 500)
         ch.arp_mode = data.get("arp_mode", "OFF")
         return ch
+
+class DroneConfig:
+    """Configuration for a static drone note/chord."""
+    def __init__(self, drone_id: int):
+        self.drone_id = drone_id
+        self.enabled = False
+        self.name = f"Drone {drone_id + 1}"
+        self.midi_channel = 0
+        self.velocity = 80
+
+        # Visual configuration
+        self.display_color = "#4CAF50"  # Default green color for key flashing
+
+        # Note configuration
+        self.mode = "static"  # "static" or "cycle"
+
+        # Note selection: up to 4 notes with individual octaves (used by both modes)
+        self.cycle_auto_notes = False  # Auto-select notes from scale
+        self.cycle_pattern = "Up"  # Pattern to use for auto mode
+        self.cycle_notes = [0, 4, 7, 0]  # C, E, G, C (note within octave 0-11)
+        self.cycle_octaves = [4, 4, 4, 5]  # Absolute octave numbers (0-8, where C4=MIDI 60)
+        self.cycle_note_enabled = [True, True, True, True]  # Enable/disable each note
+
+        # Cycle mode settings
+        self.cycle_duration = 1000  # Duration for each note in cycle (ms)
+        self.cycle_pause = 0  # Pause between note triggers (ms)
+
+    def get_effective_note(self, note: int, octave: int) -> int:
+        """Calculate the effective MIDI note from note (0-11) and absolute octave (0-8), clamped to 0-127.
+
+        Standard MIDI octave system where C4 = MIDI 60 (middle C).
+
+        Args:
+            note: Note within octave (0-11, where 0=C, 1=C#, 2=D, etc.)
+            octave: Absolute octave number (0-8, where octave 4 contains middle C)
+
+        Returns:
+            MIDI note number (0-127)
+        """
+        # Standard MIDI: C4 = 60, so we need to offset by +12
+        # C-1 = 0, C0 = 12, C1 = 24, C2 = 36, C3 = 48, C4 = 60, C5 = 72, C6 = 84, C7 = 96, C8 = 108
+        # Formula: MIDI note = ((octave + 1) * 12) + note
+        effective = ((octave + 1) * 12) + note
+        return max(0, min(127, effective))
+
+    def to_dict(self) -> dict:
+        return {
+            "drone_id": self.drone_id,
+            "enabled": self.enabled,
+            "name": self.name,
+            "midi_channel": self.midi_channel,
+            "velocity": self.velocity,
+            "display_color": self.display_color,
+            "mode": self.mode,
+            "cycle_auto_notes": self.cycle_auto_notes,
+            "cycle_pattern": self.cycle_pattern,
+            "cycle_notes": self.cycle_notes,
+            "cycle_octaves": self.cycle_octaves,
+            "cycle_note_enabled": self.cycle_note_enabled,
+            "cycle_duration": self.cycle_duration,
+            "cycle_pause": self.cycle_pause
+        }
+
+    @staticmethod
+    def from_dict(data: dict) -> 'DroneConfig':
+        drone_id = data.get("drone_id", 0)
+        dr = DroneConfig(drone_id)
+        dr.enabled = data.get("enabled", False)
+        dr.name = data.get("name", f"Drone {drone_id + 1}")
+        dr.midi_channel = data.get("midi_channel", 0)
+        dr.velocity = data.get("velocity", 80)
+        dr.display_color = data.get("display_color", "#4CAF50")
+        # Backward compatibility: convert old "single" mode to "static"
+        mode = data.get("mode", "static")
+        dr.mode = "static" if mode == "single" else mode
+        dr.cycle_auto_notes = data.get("cycle_auto_notes", False)
+        dr.cycle_pattern = data.get("cycle_pattern", "Up")
+
+        # Backward compatibility: convert old MIDI note format to note+octave format
+        cycle_notes = data.get("cycle_notes", [0, 4, 7, 0])
+        cycle_octaves = data.get("cycle_octaves", [4, 4, 4, 5])
+
+        # If notes are in old format (MIDI notes like 12, 16, 19, 24), convert them
+        if cycle_notes and max(cycle_notes) > 11:
+            # Old format detected - convert MIDI notes to note+octave
+            dr.cycle_notes = [note % 12 for note in cycle_notes]
+            # Convert MIDI note to octave using standard formula: octave = (midi // 12) - 1
+            dr.cycle_octaves = [(note // 12) - 1 for note in cycle_notes]
+        else:
+            dr.cycle_notes = cycle_notes
+            # With the corrected formula ((octave + 1) * 12) + note, octave values map correctly:
+            # octave 4 -> C4-B4 (MIDI 60-71), so no conversion needed
+            dr.cycle_octaves = cycle_octaves
+
+        dr.cycle_note_enabled = data.get("cycle_note_enabled", [True, True, True, True])
+        dr.cycle_duration = data.get("cycle_duration", 1000)
+        dr.cycle_pause = data.get("cycle_pause", 0)
+        return dr
 
 class BlobEntity:
     def __init__(self, bid: int, x: float, y: float, area: float):
@@ -452,8 +611,9 @@ class BlobEntity:
         self.trail: List[Tuple[int, int]] = []
         self.collision_cooldown = 0.0
         self.size_categories: set = set()  # NEW: Track which size categories this blob belongs to
+        self.smoothed_hull = None  # Smoothed convex hull for calmer visualization
 
-    def update(self, x: float, y: float, area: float, dt: float, smoothing: float = 0.1):
+    def update(self, x: float, y: float, area: float, dt: float, smoothing: float = 0.1, hull=None, hull_smoothing: float = 0.3):
         self.vx = x - self.x
         self.vy = y - self.y
         raw_speed = math.hypot(self.vx, self.vy)
@@ -468,6 +628,20 @@ class BlobEntity:
             self.trail.pop(0)
         if self.collision_cooldown > 0:
             self.collision_cooldown -= dt
+
+        # Smooth the convex hull for calmer visualization
+        if hull is not None:
+            if self.smoothed_hull is None:
+                # First time - initialize with current hull
+                self.smoothed_hull = hull.astype(np.float32)
+            else:
+                # Match hull sizes by interpolation/resampling if needed
+                if len(self.smoothed_hull) == len(hull):
+                    # Same size - smooth directly
+                    self.smoothed_hull += (hull.astype(np.float32) - self.smoothed_hull) * hull_smoothing
+                else:
+                    # Different size - use new hull but smooth the transition
+                    self.smoothed_hull = hull.astype(np.float32)
 
     def update_size_categories(self):
         """Calculate which size categories this blob belongs to based on smooth_area."""
@@ -514,8 +688,19 @@ class MidiMonitor:
                 del self.active_notes[channel][note]
             if channel in self.active_notes and not self.active_notes[channel]:
                 del self.active_notes[channel]
-            if note in self.active_keys:
+
+            # Only remove from active_keys if NO other channel is holding this note
+            note_still_active = False
+            for ch_notes in self.active_notes.values():
+                if note in ch_notes:
+                    note_still_active = True
+                    break
+
+            if not note_still_active and note in self.active_keys:
                 del self.active_keys[note]
+                # Also remove from note_channels if the note is fully released
+                if note in self.note_channels:
+                    del self.note_channels[note]
 
     def cc_update(self, channel: int, cc_num: int, value: int):
         with self.lock:
@@ -563,6 +748,10 @@ class MidiEngine:
         if self.outport:
             self.outport.send(mido.Message('control_change', channel=ch, control=cc, value=val))
             self.monitor.cc_update(ch, cc, val)
+            # Log sustain pedal events (CC64)
+            if cc == 64:
+                status = "ON " if val >= 64 else "OFF"
+                self.logger(f"🎹 Ch{ch+1:2d} | Sustain: {status}")
 
     def note_on(self, ch: int, note: int, vel: int):
         if self.outport:
@@ -629,6 +818,206 @@ class PresetManager:
         except Exception as e:
             print(f"Error saving preset {filename}: {e}")
             return False
+
+class ThemeManager:
+    """Centralized theme management for MagmaMIDI."""
+
+    def __init__(self, theme_file: str = "./themes/default_theme.json"):
+        self.theme_file = theme_file
+        self.theme_data = {}
+        self.default_theme = self._create_default_theme()
+
+        # Try to load theme, create default if missing
+        if not self.load_theme(theme_file):
+            os.makedirs(os.path.dirname(theme_file), exist_ok=True)
+            self.save_theme(theme_file)
+
+    def _create_default_theme(self) -> dict:
+        """Create built-in default theme (current dark theme)."""
+        return {
+            "theme_metadata": {
+                "name": "Dark Theme",
+                "version": "1.0",
+                "author": "MagmaMIDI"
+            },
+            "ui_backgrounds": {
+                "window_bg": "#1a1a1a",
+                "sidebar_bg": "#1e1e1e",
+                "header_bg": "#2b2b2b",
+                "canvas_bg": "#000000",
+                "paned_sash_bg": "#0d0d0d",
+                "status_bar_bg": "#2b2b2b",
+                "frame_dark": "#1a1a1a",
+                "frame_medium": "#2a2a2a",
+                "frame_light": "#2b2b2b",
+                "notebook_tab_inactive": "#1a1a1a",
+                "notebook_tab_active": "#2b2b2b",
+                "section_bg": "#1e1e1e",
+                "content_bg": "#2b2b2b"
+            },
+            "ui_text": {
+                "text_primary": "#ffffff",
+                "text_secondary": "#888888",
+                "text_accent": "#FFD700",
+                "text_dimmed": "#888",
+                "text_brand": "#9C27B0",
+                "text_version": "#888",
+                "text_label": "#ffffff",
+                "text_info": "#888888"
+            },
+            "buttons": {
+                "btn_primary_bg": "#2196F3",
+                "btn_primary_active": "#1976D2",
+                "btn_primary_fg": "#ffffff",
+                "btn_start_bg": "#4CAF50",
+                "btn_start_active": "#45a049",
+                "btn_stop_bg": "#f44336",
+                "btn_stop_active": "#e53935",
+                "btn_action_bg": "#FF9800",
+                "btn_action_active": "#F57C00",
+                "btn_secondary_bg": "#2b2b2b",
+                "btn_secondary_fg": "#ffffff",
+                "btn_collapse_bg": "#555555",
+                "btn_collapse_active": "#666666"
+            },
+            "controls": {
+                "checkbox_bg": "#1e1e1e",
+                "checkbox_fg": "#ffffff",
+                "checkbox_select": "#1e1e1e",
+                "checkbox_active_bg": "#1e1e1e",
+                "checkbox_active_fg": "#ffffff",
+                "entry_bg": "#1a1a1a",
+                "entry_fg": "#00ff00",
+                "entry_insert": "#ffffff",
+                "spinbox_bg": "#2b2b2b",
+                "spinbox_fg": "#ffffff",
+                "spinbox_button_bg": "#2b2b2b",
+                "slider_bg": "#1e1e1e",
+                "slider_fg": "#ffffff",
+                "combobox_bg": "#2a2a2a"
+            },
+            "visualization": {
+                "blob_off_bgr": [0, 255, 0],
+                "blob_attack_bgr": [0, 165, 255],
+                "blob_on_bgr": [0, 0, 255],
+                "blob_release_bgr": [0, 255, 255],
+                "motion_border_bgr": [0, 255, 0],
+                "blob_unassigned_bgr": [60, 60, 60]
+            },
+            "channel_palette": [
+                "#2196F3", "#4CAF50", "#FF9800", "#9C27B0",
+                "#F44336", "#00BCD4", "#CDDC39", "#FF5722",
+                "#3F51B5", "#009688", "#FFC107", "#E91E63",
+                "#8BC34A", "#673AB7", "#795548", "#607D8B"
+            ],
+            "piano_keyboard": {
+                "piano_bg": "#1a1a1a",
+                "piano_white_key": "#ffffff",
+                "piano_black_key": "#000000",
+                "piano_white_key_active": "#ff4444",
+                "piano_black_key_active": "#ff0000",
+                "piano_key_text_light": "#fff",
+                "piano_key_text_dark": "#333",
+                "piano_outline_normal": "#cccccc",
+                "piano_outline_active": "#ff0000",
+                "piano_outline_black_normal": "#000000",
+                "piano_outline_black_active": "#ff6666",
+                "piano_canvas_bg": "#1a1a1a",
+                "piano_header_bg": "#2b2b2b",
+                "piano_control_bg": "#1a1a1a"
+            },
+            "status_indicators": {
+                "status_running_fg": "#4CAF50",
+                "status_stopped_fg": "#888",
+                "indicator_active": "#4CAF50",
+                "indicator_inactive": "#555555"
+            },
+            "tooltips": {
+                "tooltip_bg": "#ffffe0",
+                "tooltip_fg": "#000000"
+            }
+        }
+
+    def load_theme(self, filepath: str) -> bool:
+        """Load theme from JSON with validation."""
+        try:
+            if not os.path.exists(filepath):
+                self.theme_data = self.default_theme.copy()
+                return False
+
+            with open(filepath, 'r') as f:
+                loaded = json.load(f)
+
+            self.theme_data = self._validate_and_merge(loaded, self.default_theme)
+            return True
+        except Exception as e:
+            print(f"Error loading theme: {e}")
+            self.theme_data = self.default_theme.copy()
+            return False
+
+    def save_theme(self, filepath: str) -> bool:
+        """Save current theme to JSON."""
+        try:
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            with open(filepath, 'w') as f:
+                json.dump(self.theme_data, f, indent=2)
+            return True
+        except Exception as e:
+            print(f"Error saving theme: {e}")
+            return False
+
+    def get_color(self, category: str, key: str, fallback: str = "#ffffff") -> str:
+        """Get hex color with fallback."""
+        try:
+            return self.theme_data[category][key]
+        except (KeyError, TypeError):
+            return fallback
+
+    def get_bgr(self, category: str, key: str, fallback: tuple = (0, 255, 0)) -> tuple:
+        """Get BGR tuple for OpenCV."""
+        try:
+            return tuple(self.theme_data[category][key])
+        except (KeyError, TypeError):
+            return fallback
+
+    def update_color(self, category: str, key: str, value) -> None:
+        """Update a color in current theme."""
+        if category not in self.theme_data:
+            self.theme_data[category] = {}
+        self.theme_data[category][key] = value
+
+    def hex_to_bgr(self, hex_color: str) -> tuple:
+        """Convert hex to BGR tuple."""
+        hex_color = hex_color.lstrip('#')
+        r = int(hex_color[0:2], 16)
+        g = int(hex_color[2:4], 16)
+        b = int(hex_color[4:6], 16)
+        return (b, g, r)
+
+    def bgr_to_hex(self, bgr: tuple) -> str:
+        """Convert BGR to hex."""
+        b, g, r = bgr
+        return f"#{r:02x}{g:02x}{b:02x}"
+
+    def get_channel_color(self, channel_id: int) -> str:
+        """Get channel color from rotating palette."""
+        palette = self.theme_data.get("channel_palette", [])
+        if not palette:
+            return "#4CAF50"
+        return palette[channel_id % len(palette)]
+
+    def _validate_and_merge(self, loaded: dict, default: dict) -> dict:
+        """Recursively merge loaded theme with defaults."""
+        result = default.copy()
+        for key, default_value in default.items():
+            if key in loaded:
+                if isinstance(default_value, dict):
+                    result[key] = self._validate_and_merge(
+                        loaded[key], default_value
+                    )
+                else:
+                    result[key] = loaded[key]
+        return result
 
 # ============================================================================
 # VIRTUAL PIANO KEYBOARD
@@ -867,29 +1256,51 @@ class VirtualPiano:
         for note in changed_notes:
             self._update_key_color(note)
     
-    def update_active_notes(self, active_notes: Dict[int, float], note_channels: Dict[int, int] = None, fade_states: dict = None):
+    def update_active_notes(self, active_notes: Dict[int, float], note_channels: Dict[int, int] = None, fade_states: dict = None, drone_note_colors: Dict[int, str] = None):
         """Update active notes and optionally apply smooth fade transitions.
 
         Args:
             active_notes: Dict of {note: velocity} for currently active notes
             note_channels: Optional dict of {note: channel_idx} for per-channel colors
             fade_states: Optional dict of {note: fade_value} for smooth transitions
+            drone_note_colors: Optional dict of {note: color_hex} for drone note colors (takes priority)
         """
         if not self.piano_drawn:
             return
+        # First, set colors from channel configs
         if note_channels and self.channel_configs:
-            for note, channel_idx in note_channels.items():
-                if 0 <= channel_idx < len(self.channel_configs):
-                    channel_config = self.channel_configs[channel_idx]
+            for note, midi_channel in note_channels.items():
+                # Find the channel config with this MIDI channel number
+                channel_config = None
+                for cfg in self.channel_configs:
+                    if cfg.midi_channel == midi_channel:
+                        channel_config = cfg
+                        break
+
+                if channel_config:
+                    # Only set channel color if this note doesn't have a drone color
+                    if drone_note_colors and note in drone_note_colors:
+                        continue  # Skip - drone color takes priority
                     self.key_colors[note] = channel_config.display_color
+
+        # Drone colors always take priority and should always be set
+        if drone_note_colors:
+            for note, color in drone_note_colors.items():
+                self.key_colors[note] = color
+                # Make sure drone notes are in active_notes and key_animations
+                if note not in self.key_animations:
+                    self.key_animations[note] = 1.0  # Full brightness for drones
+                    self.key_states[note] = 1.0
 
         for note in active_notes:
             if note not in self.key_animations:
                 self.key_animations[note] = 0.0
                 self.key_states[note] = 0.0
 
+        # Clean up colors for notes that are no longer active AND not in drone_note_colors
         for note in list(self.key_colors.keys()):
-            if note not in self.key_animations and note not in active_notes:
+            is_drone_note = drone_note_colors and note in drone_note_colors
+            if not is_drone_note and note not in self.key_animations and note not in active_notes:
                 del self.key_colors[note]
 
         self.active_notes = active_notes
@@ -898,6 +1309,12 @@ class VirtualPiano:
     def set_note_range(self, min_note: int, max_note: int):
         self.note_range = (min_note, max_note)
         self._redraw_piano()
+
+    def redraw(self):
+        """Redraw all active keys with their current colors."""
+        for note in list(self.key_states.keys()):
+            if self.key_states.get(note, 0) > 0:
+                self._update_key_color(note)
 
     def _find_note_at_position(self, x: int, y: int) -> Optional[int]:
         for note, bounds in self.note_to_bounds.items():
@@ -960,14 +1377,26 @@ class App:
         except:
             pass
 
+        # Configure global checkbox styling for better visibility in dark mode
+        self.window.option_add('*TCheckbutton*foreground', 'white')
+        self.window.option_add('*TCheckbutton*background', '#1e1e1e')
+        self.window.option_add('*TCheckbutton*selectColor', 'white')
+        self.window.option_add('*TCheckbutton*indicatorBackground', '#1e1e1e')
+        self.window.option_add('*TCheckbutton*indicatorForeground', 'white')
+
         # Initialize components
         self.midi_monitor = MidiMonitor()
         self.midi = MidiEngine(self.log, self.midi_monitor)
         self.preset_manager = PresetManager()
-        
+        self.theme_manager = ThemeManager("./themes/default_theme.json")
+
         # Initial variable setup (will be overwritten by UI creators, but safe defaults)
-        self.bg_threshold_var = tk.IntVar(value=16) 
+        self.bg_threshold_var = tk.IntVar(value=16)
         self.bg_history_var = tk.IntVar(value=500)
+        self.hull_smoothing_var = tk.DoubleVar(value=0.3)  # Hull border smoothing strength
+        self.detection_borders_toggle = tk.BooleanVar(value=True)  # Show detection borders
+        self.detection_circles_toggle = tk.BooleanVar(value=True)  # Show detection circles
+        self.notes_toggle = tk.BooleanVar(value=True)  # Show channel notes
 
         # Video capture
         self.cap = cv2.VideoCapture(0)
@@ -992,6 +1421,14 @@ class App:
         self.last_sent_cc: Dict[int, Dict[int, int]] = {}      # {midi_channel: {cc_num: value}}
         self.last_sent_pitchbend: Dict[int, int] = {}          # {midi_channel: pitchbend_value}
 
+        # Modulation lock tracking - prevents jitter by locking modulation when notes are playing
+        self.channel_active_notes: Dict[int, int] = {}         # {midi_channel: count of active notes}
+        self.channel_locked_modwheel: Dict[int, int] = {}      # {midi_channel: locked modwheel value}
+        self.channel_locked_pitchbend: Dict[int, int] = {}     # {midi_channel: locked pitchbend value}
+
+        # Sustain pedal state tracking
+        self.sustain_pedal_states: Dict[int, Optional[float]] = {}  # {midi_channel: pedal_down_time or None}
+
         # Channel configurations
         self.channel_configs = [ChannelConfig(i) for i in range(16)]
         self.active_channel_uis: List[Dict] = []
@@ -1004,10 +1441,17 @@ class App:
                 else:
                     cfg.size_categories = {"All"}
 
+        # Drone configurations
+        self.drone_configs: List[DroneConfig] = []
+        self.active_drone_uis: List[Dict] = []
+        self.drone_states: Dict[int, Dict] = {}  # {drone_id: {current_note: int, cycle_index: int, next_change_time: float}}
+        self.drone_note_colors: Dict[int, str] = {}  # {note_number: color_hex} for drone notes
+
         # UI Setup
         self.log_box = None  # Initialize early, will be created in _create_piano_keyboard
         self._setup_ui()
         self.piano = None
+        self.apply_theme()  # Apply theme colors after UI creation
         self.update_scale_pool()
         self._try_load_default_preset()
         self.update_loop()
@@ -1019,13 +1463,27 @@ class App:
     # UI SETUP
     # ========================================================================
 
+    def apply_theme(self):
+        """Apply theme colors to all UI elements and visualization."""
+        # Update visualization colors (BGR format for OpenCV)
+        self.blob_color_off = self.theme_manager.get_bgr("visualization", "blob_off_bgr", (0, 255, 0))
+        self.blob_color_on = self.theme_manager.get_bgr("visualization", "blob_on_bgr", (0, 0, 255))
+        self.motion_border_color = self.theme_manager.get_bgr("visualization", "motion_border_bgr", (0, 255, 0))
+
+        # Update window background
+        self.window.configure(bg=self.theme_manager.get_color("ui_backgrounds", "window_bg", "#1a1a1a"))
+
+        # Note: Full UI refresh would require recreating all widgets
+        # For now, visualization colors are applied immediately
+        # UI widget colors are applied during creation via theme_manager lookups
+
     def _setup_ui(self):
         """Setup GUI matching screenshot style: Left sidebar, Center video, Right sidebar"""
-        main_container = tk.Frame(self.window, bg="#1a1a1a")
+        main_container = tk.Frame(self.window, bg=self.theme_manager.get_color("ui_backgrounds", "window_bg"))
         main_container.pack(fill=tk.BOTH, expand=True)
 
         main_paned = tk.PanedWindow(main_container, orient=tk.HORIZONTAL, sashwidth=6,
-                                   bg="#0d0d0d", sashrelief=tk.RAISED, bd=0)
+                                   bg=self.theme_manager.get_color("ui_backgrounds", "paned_sash_bg"), sashrelief=tk.RAISED, bd=0)
         main_paned.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
 
         screen_width = self.window.winfo_screenwidth()
@@ -1035,32 +1493,38 @@ class App:
         right_width = screen_width - left_width - center_width
 
         # === LEFT SIDEBAR ===
-        left_sidebar = tk.Frame(main_paned, bg="#1e1e1e", width=left_width)
+        left_sidebar = tk.Frame(main_paned, bg=self.theme_manager.get_color("ui_backgrounds", "sidebar_bg"), width=left_width)
         main_paned.add(left_sidebar, minsize=200, width=left_width)
         self._create_left_sidebar(left_sidebar)
 
         # === CENTER: Video Area ===
-        center_panel = tk.Frame(main_paned, bg="#000", width=center_width)
+        center_panel = tk.Frame(main_paned, bg=self.theme_manager.get_color("ui_backgrounds", "canvas_bg"), width=center_width)
         main_paned.add(center_panel, minsize=400, width=center_width)
         self._create_video_panel(center_panel)
 
         # === RIGHT SIDEBAR ===
-        right_sidebar = tk.Frame(main_paned, bg="#1e1e1e", width=right_width)
+        right_sidebar = tk.Frame(main_paned, bg=self.theme_manager.get_color("ui_backgrounds", "sidebar_bg"), width=right_width)
         main_paned.add(right_sidebar, minsize=300, width=right_width)
         self._create_right_sidebar(right_sidebar)
 
         # === BOTTOM: Status Bar ===
-        status_bar = tk.Frame(main_container, bg="#2b2b2b", height=30)
+        status_bar = tk.Frame(main_container, bg=self.theme_manager.get_color("ui_backgrounds", "status_bar_bg"), height=30)
         status_bar.pack(fill=tk.X, side=tk.BOTTOM, before=None)
         status_bar.pack_propagate(False)
 
-        self.status_midi = tk.Label(status_bar, text="MIDI: Ready ○", bg="#2b2b2b", fg="#888",
+        self.status_midi = tk.Label(status_bar, text="MIDI: Ready ○",
+                                    bg=self.theme_manager.get_color("ui_backgrounds", "status_bar_bg"),
+                                    fg=self.theme_manager.get_color("ui_text", "text_secondary"),
                                     font=("Arial", 10, "bold"))
         self.status_midi.pack(side=tk.LEFT, padx=15, pady=5)
-        self.status_fps = tk.Label(status_bar, text="0 FPS", bg="#2b2b2b", fg="#888",
+        self.status_fps = tk.Label(status_bar, text="0 FPS",
+                                   bg=self.theme_manager.get_color("ui_backgrounds", "status_bar_bg"),
+                                   fg=self.theme_manager.get_color("ui_text", "text_secondary"),
                                    font=("Arial", 10))
         self.status_fps.pack(side=tk.LEFT, padx=15, pady=5)
-        self.status_thread = tk.Label(status_bar, text="System Ready ✓", bg="#2b2b2b", fg="#4CAF50",
+        self.status_thread = tk.Label(status_bar, text="System Ready ✓",
+                                      bg=self.theme_manager.get_color("ui_backgrounds", "status_bar_bg"),
+                                      fg=self.theme_manager.get_color("status_indicators", "status_running_fg"),
                                       font=("Arial", 10))
         self.status_thread.pack(side=tk.RIGHT, padx=15, pady=5)
 
@@ -1107,10 +1571,10 @@ class App:
         Creates a consistent slider with a manual entry box next to it.
         Returns the variable associated with the slider.
         """
-        container = tk.Frame(parent, bg="#1e1e1e")
+        container = tk.Frame(parent, bg=self.theme_manager.get_color("ui_backgrounds", "sidebar_bg"))
         container.pack(fill=tk.X, expand=True)
 
-        frame = tk.Frame(container, bg="#1e1e1e")
+        frame = tk.Frame(container, bg=self.theme_manager.get_color("ui_backgrounds", "sidebar_bg"))
         frame.pack(fill=tk.X, expand=True)
 
         var = var_type(value=default_val)
@@ -1119,8 +1583,10 @@ class App:
 
         # Slider
         slider = tk.Scale(frame, from_=min_val, to=max_val, orient=tk.HORIZONTAL, variable=var,
-                          resolution=resolution, bg="#1e1e1e", fg="white", highlightthickness=0,
-                          showvalue=False, length=100) # Hide internal value, show via entry
+                          resolution=resolution,
+                          bg=self.theme_manager.get_color("controls", "slider_bg"),
+                          fg=self.theme_manager.get_color("controls", "slider_fg"),
+                          highlightthickness=0, showvalue=False, length=100)
         slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
 
         # Reset on double click
@@ -1128,26 +1594,36 @@ class App:
 
         # Entry/Spinbox
         entry = tk.Spinbox(frame, from_=min_val, to=max_val, increment=resolution,
-                           textvariable=var, width=5, bg="#2b2b2b", fg="white",
-                           relief=tk.FLAT, buttonbackground="#2b2b2b")
+                           textvariable=var, width=5,
+                           bg=self.theme_manager.get_color("controls", "spinbox_bg"),
+                           fg=self.theme_manager.get_color("controls", "spinbox_fg"),
+                           relief=tk.FLAT,
+                           buttonbackground=self.theme_manager.get_color("controls", "spinbox_button_bg"))
         entry.pack(side=tk.RIGHT)
 
         # Optional Indicator (now below the slider)
         if indicator:
-             tk.Label(container, text=indicator, bg="#1e1e1e", fg="#888", font=("Arial", 7)).pack(anchor="w", padx=2)
+             tk.Label(container, text=indicator,
+                     bg=self.theme_manager.get_color("ui_backgrounds", "sidebar_bg"),
+                     fg=self.theme_manager.get_color("ui_text", "text_info"),
+                     font=("Arial", 7)).pack(anchor="w", padx=2)
 
         return var
 
     def _create_left_sidebar(self, parent):
-        header = tk.Frame(parent, bg="#2b2b2b", height=50)
+        header = tk.Frame(parent, bg=self.theme_manager.get_color("ui_backgrounds", "header_bg"), height=50)
         header.pack(fill=tk.X)
         header.pack_propagate(False)
-        tk.Label(header, text="MAGMA", font=("Arial", 16, "bold"), bg="#2b2b2b", fg="#9C27B0").pack(side=tk.LEFT, padx=15, pady=12)
-        tk.Label(header, text="v7.6", font=("Arial", 10), bg="#2b2b2b", fg="#888").pack(side=tk.LEFT, pady=12)
+        tk.Label(header, text="MAGMA", font=("Arial", 16, "bold"),
+                bg=self.theme_manager.get_color("ui_backgrounds", "header_bg"),
+                fg=self.theme_manager.get_color("ui_text", "text_brand")).pack(side=tk.LEFT, padx=15, pady=12)
+        tk.Label(header, text="v7.7", font=("Arial", 10),
+                bg=self.theme_manager.get_color("ui_backgrounds", "header_bg"),
+                fg=self.theme_manager.get_color("ui_text", "text_version")).pack(side=tk.LEFT, pady=12)
 
-        canvas = tk.Canvas(parent, bg="#1e1e1e", highlightthickness=0)
+        canvas = tk.Canvas(parent, bg=self.theme_manager.get_color("ui_backgrounds", "sidebar_bg"), highlightthickness=0)
         scrollbar = tk.Scrollbar(parent, orient="vertical", command=canvas.yview)
-        scrollable = tk.Frame(canvas, bg="#1e1e1e")
+        scrollable = tk.Frame(canvas, bg=self.theme_manager.get_color("ui_backgrounds", "sidebar_bg"))
 
         scrollable.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         window_id = canvas.create_window((0, 0), window=scrollable, anchor="nw")
@@ -1182,6 +1658,7 @@ class App:
         self._create_collapsible_section(scrollable, "Motion Detection", [
             ("Sensitivty (Thresh)", self._create_motion_threshold_control),
             ("BG History", self._create_motion_history_control),
+            ("Border Smoothing", self._create_hull_smoothing_control),
             ("Trigger Speed", self._create_sensitivity_control),
             ("Blob Border Colors", self._create_blob_colors_control),
         ], start_collapsed=True)
@@ -1197,9 +1674,9 @@ class App:
         ], start_collapsed=True)
 
     def _create_collapsible_section(self, parent, title, items, start_collapsed=False):
-        section_frame = tk.Frame(parent, bg="#1e1e1e")
+        section_frame = tk.Frame(parent, bg=self.theme_manager.get_color("ui_backgrounds", "section_bg"))
         section_frame.pack(fill=tk.X, padx=5, pady=2)
-        header = tk.Frame(section_frame, bg="#2b2b2b", cursor="hand2")
+        header = tk.Frame(section_frame, bg=self.theme_manager.get_color("ui_backgrounds", "header_bg"), cursor="hand2")
         header.pack(fill=tk.X)
         collapsed = tk.BooleanVar(value=start_collapsed)
         def toggle():
@@ -1212,11 +1689,17 @@ class App:
                 arrow.config(text="▶")
                 collapsed.set(True)
         header.bind("<Button-1>", lambda e: toggle())
-        arrow = tk.Label(header, text="▼" if not start_collapsed else "▶", bg="#2b2b2b", fg="white", font=("Arial", 8), width=2)
+        arrow = tk.Label(header, text="▼" if not start_collapsed else "▶",
+                        bg=self.theme_manager.get_color("ui_backgrounds", "header_bg"),
+                        fg=self.theme_manager.get_color("ui_text", "text_primary"),
+                        font=("Arial", 8), width=2)
         arrow.pack(side=tk.LEFT, padx=5)
         arrow.bind("<Button-1>", lambda e: toggle())
-        tk.Label(header, text=title, bg="#2b2b2b", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
-        content = tk.Frame(section_frame, bg="#1e1e1e")
+        tk.Label(header, text=title,
+                bg=self.theme_manager.get_color("ui_backgrounds", "header_bg"),
+                fg=self.theme_manager.get_color("ui_text", "text_primary"),
+                font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
+        content = tk.Frame(section_frame, bg=self.theme_manager.get_color("ui_backgrounds", "section_bg"))
         if not start_collapsed:
             content.pack(fill=tk.X, padx=5, pady=5)
         for item in items:
@@ -1277,11 +1760,32 @@ class App:
         self.var_contrast = self._create_param_slider(frame, 0, 200, 100, 1)
 
     def _create_overlay_toggles(self, parent):
-        frame = tk.Frame(parent, bg="#1e1e1e")
+        frame = tk.Frame(parent, bg=self.theme_manager.get_color("ui_backgrounds", "sidebar_bg"))
         frame.pack(fill=tk.X, pady=2)
-        self.notes_toggle = tk.BooleanVar(value=True)
-        tk.Checkbutton(frame, text="Show Notes", variable=self.notes_toggle, bg="#1e1e1e", fg="white",
-                      selectcolor="#2b2b2b", activebackground="#1e1e1e").pack(side=tk.LEFT, padx=5)
+
+        # Show Notes toggle (uses pre-initialized variable)
+        tk.Checkbutton(frame, text="Show Notes", variable=self.notes_toggle,
+                      bg=self.theme_manager.get_color("controls", "checkbox_bg"),
+                      fg=self.theme_manager.get_color("controls", "checkbox_fg"),
+                      selectcolor=self.theme_manager.get_color("controls", "checkbox_select"),
+                      activebackground=self.theme_manager.get_color("controls", "checkbox_active_bg"),
+                      activeforeground=self.theme_manager.get_color("controls", "checkbox_active_fg")).pack(side=tk.LEFT, padx=5)
+
+        # Show Detection Borders toggle (uses pre-initialized variable)
+        tk.Checkbutton(frame, text="Borders", variable=self.detection_borders_toggle,
+                      bg=self.theme_manager.get_color("controls", "checkbox_bg"),
+                      fg=self.theme_manager.get_color("controls", "checkbox_fg"),
+                      selectcolor=self.theme_manager.get_color("controls", "checkbox_select"),
+                      activebackground=self.theme_manager.get_color("controls", "checkbox_active_bg"),
+                      activeforeground=self.theme_manager.get_color("controls", "checkbox_active_fg")).pack(side=tk.LEFT, padx=5)
+
+        # Show Detection Circles toggle (uses pre-initialized variable)
+        tk.Checkbutton(frame, text="Circles", variable=self.detection_circles_toggle,
+                      bg=self.theme_manager.get_color("controls", "checkbox_bg"),
+                      fg=self.theme_manager.get_color("controls", "checkbox_fg"),
+                      selectcolor=self.theme_manager.get_color("controls", "checkbox_select"),
+                      activebackground=self.theme_manager.get_color("controls", "checkbox_active_bg"),
+                      activeforeground=self.theme_manager.get_color("controls", "checkbox_active_fg")).pack(side=tk.LEFT, padx=5)
 
     def _create_scale_controls(self, parent):
         frame = tk.Frame(parent, bg="#1e1e1e")
@@ -1328,6 +1832,14 @@ class App:
                                     "Background history length.\nHigher values = more stable background model",
                                     width=10, bg="#1e1e1e")
         self.bg_history_var = self._create_param_slider(frame, 10, 1000, 500, 10, tk.IntVar)
+
+    def _create_hull_smoothing_control(self, parent):
+        frame = tk.Frame(parent, bg="#1e1e1e")
+        frame.pack(fill=tk.X, pady=2)
+        self._create_label_with_info(frame, "Border Smooth:",
+                                    "Smoothing strength for motion borders.\nHigher values = calmer, more serene borders\nLower values = more responsive borders",
+                                    width=10, bg="#1e1e1e")
+        self.hull_smoothing_var = self._create_param_slider(frame, 0.0, 1.0, 0.3, 0.05, tk.DoubleVar)
 
     def _create_sensitivity_control(self, parent):
         frame1 = tk.Frame(parent, bg="#1e1e1e")
@@ -1481,17 +1993,39 @@ class App:
         self.canvas_height = event.height
 
     def _create_right_sidebar(self, parent):
-        # Remove tabs - show channels directly with log below
-        channels_container = tk.Frame(parent, bg="#1e1e1e")
-        channels_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # Create tabbed interface for Channels and Drones
+        notebook = ttk.Notebook(parent)
+
+        # Style the notebook to match overall design
+        style = ttk.Style()
+        style.theme_use('default')
+        style.configure('TNotebook', background='#1e1e1e', borderwidth=0)
+        style.configure('TNotebook.Tab',
+                       background='#1a1a1a',  # Inactive: darker
+                       foreground='#888888',  # Inactive: dimmed text
+                       padding=[10, 5],
+                       font=('Arial', 9))
+        style.map('TNotebook.Tab',
+                 background=[('selected', '#2b2b2b')],  # Active: lighter
+                 foreground=[('selected', 'white')],    # Active: bright text
+                 expand=[('selected', [1, 1, 1, 0])])
+
+        notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Channel Configuration tab
+        channels_container = tk.Frame(notebook, bg="#1e1e1e")
+        notebook.add(channels_container, text="Channels")
         self._create_channels_tab(channels_container)
 
+        # Static Drones tab
+        drones_container = tk.Frame(notebook, bg="#1e1e1e")
+        notebook.add(drones_container, text="Drones")
+        self._create_drones_tab(drones_container)
+
     def _create_channels_tab(self, parent):
-        header = tk.Frame(parent, bg="#2b2b2b", height=45)
+        header = tk.Frame(parent, bg="#2b2b2b", height=40)
         header.pack(fill=tk.X)
         header.pack_propagate(False)
-        tk.Label(header, text="Channel Configuration", font=("Arial", 12, "bold"),
-                bg="#2b2b2b", fg="white").pack(side=tk.LEFT, padx=15, pady=12)
 
         btn_add = tk.Button(header, text="+ Add Channel", bg="#4CAF50", fg="white",
                            font=("Arial", 9, "bold"), command=self.add_channel_ui,
@@ -1521,6 +2055,37 @@ class App:
 
         self.active_channel_uis = []
         self.eyedropper_active = False
+
+    def _create_drones_tab(self, parent):
+        header = tk.Frame(parent, bg="#2b2b2b", height=40)
+        header.pack(fill=tk.X)
+        header.pack_propagate(False)
+
+        btn_add = tk.Button(header, text="+ Add Drone", bg="#4CAF50", fg="white",
+                           font=("Arial", 9, "bold"), command=self.add_drone_ui,
+                           relief=tk.FLAT, cursor="hand2", activebackground="#45a049")
+        btn_add.pack(side=tk.RIGHT, padx=15, pady=8)
+
+        btn_collapse = tk.Button(header, text="Collapse All", bg="#555555", fg="white",
+                                font=("Arial", 9), command=self.collapse_all_drones,
+                                relief=tk.FLAT, cursor="hand2", activebackground="#666666")
+        btn_collapse.pack(side=tk.RIGHT, padx=5, pady=8)
+
+        canvas = tk.Canvas(parent, bg="#1e1e1e", highlightthickness=0)
+        scrollbar = tk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        self.drones_frame = tk.Frame(canvas, bg="#1e1e1e")
+
+        self.drones_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        window_id = canvas.create_window((0, 0), window=self.drones_frame, anchor="nw")
+        canvas.bind('<Configure>', lambda e: canvas.itemconfig(window_id, width=e.width))
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Bind scroll recursively to all widgets
+        self._bind_mouse_scroll_recursive(self.drones_frame, canvas)
+        self._bind_mouse_scroll(parent, canvas)
+
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
     def _create_log_content(self, parent):
         """Create compact log display (used next to keyboard)."""
@@ -1563,7 +2128,7 @@ class App:
         piano_frame = tk.Frame(piano_container, bg="#1a1a1a")
         piano_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        self.piano = VirtualPiano(piano_frame, note_range=(36, 96), height=120,
+        self.piano = VirtualPiano(piano_frame, note_range=(21, 108), height=120,
                                    midi_engine=self.midi, channel_configs=self.channel_configs)
 
         # Log panel to the right of keyboard
@@ -1576,8 +2141,8 @@ class App:
         if self.piano is not None and self.piano.piano_drawn:
             active_keys = self.midi_monitor.get_active_keys()
             note_channels = self.midi_monitor.get_note_channels()
-            # Always pass fade_states for smooth keyboard transitions
-            self.piano.update_active_notes(active_keys, note_channels, self.key_fade_states)
+            # Always pass fade_states and drone_note_colors for smooth keyboard transitions
+            self.piano.update_active_notes(active_keys, note_channels, self.key_fade_states, self.drone_note_colors)
         self.window.after(33, self.update_piano)
 
     def update_key_fades(self, dt: float, fade_speed: float = 5.0):
@@ -1632,8 +2197,8 @@ class App:
         # Collapsible header
         header = tk.Frame(ch_frame, bg=cfg.display_color, cursor="hand2")
         header.pack(fill=tk.X)
-        
-        collapsed = tk.BooleanVar(value=False)
+
+        collapsed = tk.BooleanVar(value=True)
         def toggle_section():
             if collapsed.get():
                 content.pack(fill=tk.X, padx=10, pady=10)
@@ -1643,9 +2208,9 @@ class App:
                 content.pack_forget()
                 arrow.config(text="▶")
                 collapsed.set(True)
-        
+
         header.bind("<Button-1>", lambda e: toggle_section())
-        arrow = tk.Label(header, text="▼", bg=cfg.display_color, fg="white", font=("Arial", 10), width=2)
+        arrow = tk.Label(header, text="▶", bg=cfg.display_color, fg="white", font=("Arial", 10), width=2)
         arrow.pack(side=tk.LEFT, padx=5, pady=5)
         arrow.bind("<Button-1>", lambda e: toggle_section())
 
@@ -1653,19 +2218,27 @@ class App:
         name_entry = tk.Entry(header, bg=cfg.display_color, fg="white", font=("Arial", 10, "bold"),
                              insertbackground="white", relief=tk.FLAT, borderwidth=0)
         name_entry.insert(0, cfg.name)
+        name_entry.bind("<FocusOut>", lambda e: setattr(cfg, 'name', name_entry.get()))
+        name_entry.bind("<Return>", lambda e: header.focus())  # Remove focus on Enter
         name_entry.pack(side=tk.LEFT, padx=5, pady=5, fill=tk.X, expand=True)
 
         # MIDI channel indicator (display 1-16)
         midi_ch_label = tk.Label(header, text=f"Ch{cfg.midi_channel + 1}", bg=cfg.display_color,
                                 fg="white", font=("Arial", 9), padx=8)
         midi_ch_label.pack(side=tk.LEFT, padx=5, pady=5)
-        
+
+        # Color picker button
+        color_btn = tk.Button(header, text="🎨", bg=cfg.display_color, fg="white", font=("Arial", 10),
+                             command=lambda: self.pick_channel_color(channel_idx, header, arrow, name_entry, midi_ch_label),
+                             relief=tk.FLAT, cursor="hand2", borderwidth=0, padx=3)
+        color_btn.pack(side=tk.RIGHT, padx=2, pady=5)
+
         del_btn = tk.Button(header, text="✕", bg="#f44336", fg="white", font=("Arial", 9),
                            command=lambda: self.remove_channel_ui(channel_idx), relief=tk.FLAT)
         del_btn.pack(side=tk.RIGHT, padx=5, pady=5)
 
         content = tk.Frame(ch_frame, bg="#2b2b2b")
-        content.pack(fill=tk.X, padx=10, pady=10)
+        # Don't pack content initially - it's collapsed by default
 
         self._create_channel_section(content, "Basic", [
             ("MIDI Channel", lambda p: self._create_midi_ch_control(p, channel_idx, cfg)),
@@ -1695,6 +2268,10 @@ class App:
             ("Modwheel (CC1)", lambda p: self._create_modwheel_control(p, channel_idx, cfg)),
             ("Pitchbend", lambda p: self._create_pitchbend_control(p, channel_idx, cfg)),
             ("CC Smoothing", lambda p: self._create_cc_smoothing_control(p, channel_idx, cfg)),
+        ])
+
+        self._create_channel_section(content, "Sustain Pedal", [
+            ("Sustain (CC64)", lambda p: self._create_sustain_control(p, channel_idx, cfg)),
         ])
 
         self._create_channel_section(content, "Arpeggiator", [
@@ -1787,6 +2364,7 @@ class App:
         all_cb = tk.Checkbutton(
             checkbox_container, text="All", variable=all_var,
             bg="#2b2b2b", fg="#FFD700", selectcolor="#1e1e1e",
+            activebackground="#2b2b2b", activeforeground="#FFD700",
             font=("Arial", 9, "bold"),
             command=lambda: self._toggle_size_category(channel_idx, "All", all_var, checkbox_vars)
         )
@@ -1802,6 +2380,7 @@ class App:
                 checkbox_container,
                 text=category,
                 variable=var, bg="#2b2b2b", fg="white", selectcolor="#1e1e1e",
+                activebackground="#2b2b2b", activeforeground="white",
                 font=("Arial", 9),
                 command=lambda cat=category, v=var: self._toggle_size_category(
                     channel_idx, cat, v, checkbox_vars
@@ -1833,6 +2412,7 @@ class App:
         cb = tk.Checkbutton(
             frame, text="Modwheel", variable=enabled_var,
             bg="#2b2b2b", fg="white", selectcolor="#1e1e1e",
+            activebackground="#2b2b2b", activeforeground="white",
             command=lambda: setattr(cfg, 'modwheel_enabled', enabled_var.get())
         )
         cb.pack(side=tk.LEFT, padx=5)
@@ -1854,6 +2434,7 @@ class App:
         cb = tk.Checkbutton(
             frame, text="Pitchbend", variable=enabled_var,
             bg="#2b2b2b", fg="white", selectcolor="#1e1e1e",
+            activebackground="#2b2b2b", activeforeground="white",
             command=lambda: setattr(cfg, 'pitchbend_enabled', enabled_var.get())
         )
         cb.pack(side=tk.LEFT, padx=5)
@@ -1906,6 +2487,28 @@ class App:
         # Info label
         tk.Label(frame, text="(triggers on each note event)",
                  bg="#2b2b2b", fg="#888888", font=("Arial", 8)).pack(side=tk.LEFT, padx=5)
+
+    def _create_sustain_control(self, parent, channel_idx, cfg):
+        """Create sustain pedal control with enable/disable and duration."""
+        frame = tk.Frame(parent, bg="#2b2b2b")
+        frame.pack(fill=tk.X, pady=2)
+
+        # Enable checkbox
+        enabled_var = tk.BooleanVar(value=cfg.sustain_enabled)
+        cb = tk.Checkbutton(
+            frame, text="Enable", variable=enabled_var,
+            bg="#2b2b2b", fg="white", selectcolor="#1e1e1e",
+            activebackground="#2b2b2b", activeforeground="white",
+            command=lambda: setattr(cfg, 'sustain_enabled', enabled_var.get())
+        )
+        cb.pack(side=tk.LEFT, padx=5)
+
+        # Duration slider (0-5000ms)
+        self._create_label_with_info(frame, "Duration:",
+                                    "How long the sustain pedal stays down (ms).\nPedal releases after this time",
+                                    width=10)
+        self._create_param_slider(frame, 0, 5000, cfg.sustain_duration, 50,
+                                 callback=lambda v: setattr(cfg, 'sustain_duration', int(float(v))))
 
     def _create_note_min_control(self, parent, channel_idx, cfg):
         frame = tk.Frame(parent, bg="#2b2b2b")
@@ -1983,12 +2586,13 @@ class App:
         frame.pack(fill=tk.X, pady=2)
         color_enabled = tk.BooleanVar(value=cfg.color_filter_enabled)
         tk.Checkbutton(frame, text="Enable", variable=color_enabled, bg="#2b2b2b", fg="white",
-                      selectcolor="#1e1e1e", font=("Arial", 9),
+                      selectcolor="#1e1e1e", activebackground="#2b2b2b", activeforeground="white",
+                      font=("Arial", 9),
                       command=lambda: setattr(cfg, 'color_filter_enabled', color_enabled.get())).pack(side=tk.LEFT, padx=5)
-        eyedropper_btn = tk.Button(frame, text="🎨 Pick Color", font=("Arial", 9, "bold"),
-                                   bg="#FF9800", fg="white",
+        eyedropper_btn = tk.Button(frame, text="🎨 Pick Color", font=("Arial", 8),
+                                   bg="#555555", fg="white",
                                    command=lambda: self.activate_eyedropper(channel_idx),
-                                   relief=tk.FLAT, cursor="hand2", activebackground="#F57C00")
+                                   relief=tk.FLAT, cursor="hand2", activebackground="#666666")
         eyedropper_btn.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         color_display = tk.Label(frame, text="   ", bg=cfg.display_color, width=3,
                                 relief=tk.RAISED, borderwidth=2)
@@ -2104,6 +2708,436 @@ class App:
         self.log(f"Removed {self.channel_configs[channel_idx].name}")
 
     # ========================================================================
+    # DRONE UI
+    # ========================================================================
+
+    def add_drone_ui(self, existing_drone=None):
+        """Add a new drone configuration UI.
+
+        Args:
+            existing_drone: Optional DroneConfig to use instead of creating new one
+        """
+        if existing_drone:
+            drone = existing_drone
+            drone_id = drone.drone_id
+        else:
+            drone_id = len(self.drone_configs)
+            drone = DroneConfig(drone_id)
+            self.drone_configs.append(drone)
+
+        dr_frame = tk.Frame(self.drones_frame, bg="#1e1e1e", relief=tk.RAISED, borderwidth=1)
+        dr_frame.pack(fill=tk.X, padx=5, pady=8)
+
+        # Header (will be colored with drone's display_color)
+        header = tk.Frame(dr_frame, bg=drone.display_color, cursor="hand2")
+        header.pack(fill=tk.X)
+
+        # Collapse state
+        collapsed = tk.BooleanVar(value=True)
+
+        # Content frame (defined before toggle function)
+        content = tk.Frame(dr_frame, bg="#1e1e1e")
+        # Don't pack content initially - it's collapsed by default
+
+        def toggle_section():
+            if collapsed.get():
+                content.pack(fill=tk.X, padx=10, pady=10)
+                arrow.config(text="▼")
+                collapsed.set(False)
+            else:
+                content.pack_forget()
+                arrow.config(text="▶")
+                collapsed.set(True)
+
+        header.bind("<Button-1>", lambda e: toggle_section())
+
+        # Collapse arrow
+        arrow = tk.Label(header, text="▶", bg=drone.display_color, fg="white", font=("Arial", 10), width=2)
+        arrow.pack(side=tk.LEFT, padx=5, pady=5)
+        arrow.bind("<Button-1>", lambda e: toggle_section())
+
+        # Enable checkbox (dark background with white check)
+        enabled_var = tk.BooleanVar(value=drone.enabled)
+        cb = tk.Checkbutton(header, variable=enabled_var, bg=drone.display_color, fg="white",
+                           selectcolor="#1e1e1e", activebackground=drone.display_color, activeforeground="white",
+                           command=lambda: setattr(drone, 'enabled', enabled_var.get()))
+        cb.pack(side=tk.LEFT, padx=5)
+        cb.bind("<Button-1>", lambda e: e.stopPropagation() if hasattr(e, 'stopPropagation') else None)
+
+        # Drone name
+        name_entry = tk.Entry(header, font=("Arial", 11, "bold"), bg=drone.display_color, fg="white",
+                             insertbackground="white", relief=tk.FLAT, width=15)
+        name_entry.insert(0, drone.name)
+        name_entry.bind("<FocusOut>", lambda e: setattr(drone, 'name', name_entry.get()))
+        name_entry.bind("<Return>", lambda e: header.focus())  # Remove focus on Enter
+        name_entry.pack(side=tk.LEFT, padx=10, pady=8)
+
+        # MIDI channel indicator (display 1-16)
+        midi_ch_label = tk.Label(header, text=f"Ch{drone.midi_channel + 1}", bg=drone.display_color,
+                                fg="white", font=("Arial", 9), padx=8)
+        midi_ch_label.pack(side=tk.LEFT)
+
+        # Store reference for updates when MIDI channel changes
+        def update_midi_channel_callback(new_ch):
+            setattr(drone, 'midi_channel', new_ch)
+            midi_ch_label.config(text=f"Ch{new_ch + 1}")
+
+        # MIDI activity indicator
+        midi_indicator = tk.Label(header, text="●", bg=drone.display_color, fg="#555555", font=("Arial", 12))
+        midi_indicator.pack(side=tk.LEFT, padx=5)
+
+        # Color picker button
+        color_btn = tk.Button(header, text="🎨", bg=drone.display_color, fg="white", font=("Arial", 10),
+                             command=lambda: self.pick_drone_color(drone_id, header, arrow, cb, name_entry, midi_ch_label, midi_indicator),
+                             relief=tk.FLAT, cursor="hand2", borderwidth=0, padx=3)
+        color_btn.pack(side=tk.RIGHT, padx=2, pady=5)
+
+        # Remove button
+        btn_remove = tk.Button(header, text="×", bg="#f44336", fg="white", font=("Arial", 14, "bold"),
+                              command=lambda: self.remove_drone_ui(drone_id, dr_frame),
+                              relief=tk.FLAT, cursor="hand2", width=2)
+        btn_remove.pack(side=tk.RIGHT, padx=5)
+
+        # MIDI Channel selection
+        ch_frame = tk.Frame(content, bg="#1e1e1e")
+        ch_frame.pack(fill=tk.X, pady=2)
+        tk.Label(ch_frame, text="MIDI Channel:", bg="#1e1e1e", fg="white", width=12, anchor="w").pack(side=tk.LEFT)
+        ch_var = tk.IntVar(value=drone.midi_channel + 1)  # Display 1-16
+        ch_spinbox = tk.Spinbox(ch_frame, from_=1, to=16, textvariable=ch_var, width=5,
+                               command=lambda: update_midi_channel_callback(ch_var.get() - 1))
+        ch_spinbox.pack(side=tk.LEFT, padx=5)
+
+        # Velocity slider
+        vel_frame = tk.Frame(content, bg="#1e1e1e")
+        vel_frame.pack(fill=tk.X, pady=2)
+        tk.Label(vel_frame, text="Velocity:", bg="#1e1e1e", fg="white", width=12, anchor="w").pack(side=tk.LEFT)
+        self._create_param_slider(vel_frame, 1, 127, drone.velocity, 1,
+                                 callback=lambda v: setattr(drone, 'velocity', int(float(v))))
+
+        # Mode selection (Static or Cycle)
+        mode_frame = tk.Frame(content, bg="#1e1e1e")
+        mode_frame.pack(fill=tk.X, pady=2)
+        tk.Label(mode_frame, text="Mode:", bg="#1e1e1e", fg="white", width=12, anchor="w").pack(side=tk.LEFT)
+
+        mode_var = tk.StringVar(value=drone.mode)
+
+        def on_mode_change(new_mode):
+            drone.mode = new_mode
+            mode_var.set(new_mode)
+            self._update_drone_mode_ui(drone_id)
+
+        static_rb = tk.Radiobutton(mode_frame, text="Static Notes", variable=mode_var, value="static",
+                                  bg="#1e1e1e", fg="white", selectcolor="#2b2b2b",
+                                  activebackground="#1e1e1e", activeforeground="white",
+                                  highlightthickness=0, highlightbackground="#1e1e1e",
+                                  relief=tk.FLAT, overrelief=tk.FLAT, indicatoron=True,
+                                  cursor="hand2",
+                                  command=lambda: on_mode_change('static'))
+        static_rb.pack(side=tk.LEFT, padx=5)
+
+        cycle_rb = tk.Radiobutton(mode_frame, text="Cycle Notes", variable=mode_var, value="cycle",
+                                 bg="#1e1e1e", fg="white", selectcolor="#2b2b2b",
+                                 activebackground="#1e1e1e", activeforeground="white",
+                                 highlightthickness=0, highlightbackground="#1e1e1e",
+                                 relief=tk.FLAT, overrelief=tk.FLAT, indicatoron=True,
+                                 cursor="hand2",
+                                 command=lambda: on_mode_change('cycle'))
+        cycle_rb.pack(side=tk.LEFT, padx=5)
+
+        # Note selection controls (always visible for both modes)
+        note_controls = tk.Frame(content, bg="#1e1e1e")
+        note_controls.pack(fill=tk.X, pady=5)
+
+        # Store note combo boxes, octave spinboxes, and pattern dropdown to enable/disable them
+        note_combos = []
+        octave_spinboxes = []
+        pattern_combo = None
+
+        # Auto notes button and pattern selector
+        auto_frame = tk.Frame(note_controls, bg="#1e1e1e")
+        auto_frame.pack(fill=tk.X, pady=2)
+
+        def apply_auto_notes():
+            # Apply scale notes to drone based on selected pattern
+            self._update_drone_auto_notes(drone, drone_id)
+
+        auto_btn = tk.Button(auto_frame, text="Auto", bg="#4CAF50", fg="white",
+                            font=("Arial", 9, "bold"), relief=tk.RAISED,
+                            command=apply_auto_notes, cursor="hand2", padx=10)
+        auto_btn.pack(side=tk.LEFT, padx=5)
+
+        # Pattern selection dropdown (only shown in cycle mode)
+        pattern_label = tk.Label(auto_frame, text="Pattern:", bg="#1e1e1e", fg="white")
+        pattern_var = tk.StringVar(value=drone.cycle_pattern)
+        pattern_combo = ttk.Combobox(auto_frame, textvariable=pattern_var,
+                                     values=list(DRONE_PATTERNS.keys()),
+                                     state="readonly",
+                                     width=12)
+        pattern_combo.bind("<<ComboboxSelected>>",
+                          lambda e: setattr(drone, 'cycle_pattern', pattern_var.get()))
+
+        # Only show pattern selector in cycle mode
+        if drone.mode == "cycle":
+            pattern_label.pack(side=tk.LEFT, padx=(10, 5))
+            pattern_combo.pack(side=tk.LEFT, padx=5)
+
+        # 4 note/octave pairs (always visible)
+        for i in range(4):
+            note_frame = tk.Frame(note_controls, bg="#1e1e1e")
+            note_frame.pack(fill=tk.X, pady=2)
+
+            # Enable checkbox for this note
+            note_enabled_var = tk.BooleanVar(value=drone.cycle_note_enabled[i])
+            note_cb = tk.Checkbutton(note_frame, variable=note_enabled_var, bg="#1e1e1e", fg="white",
+                                    selectcolor="#1e1e1e", activebackground="#1e1e1e", activeforeground="white",
+                                    command=lambda idx=i, var=note_enabled_var: setattr(drone.cycle_note_enabled, idx, var.get()))
+            note_cb.pack(side=tk.LEFT, padx=2)
+
+            tk.Label(note_frame, text=f"Note {i+1}:", bg="#1e1e1e", fg="white", width=10, anchor="w").pack(side=tk.LEFT)
+
+            # Note combobox - just the note name (C, C#, D, etc.)
+            cn_var = tk.StringVar(value=NOTES[drone.cycle_notes[i]])
+            cn_combo = ttk.Combobox(note_frame, textvariable=cn_var, values=NOTES,
+                                   state="readonly", width=4)
+            cn_combo.bind("<<ComboboxSelected>>",
+                         lambda e, idx=i, var=cn_var: self._update_cycle_note(drone, idx, var.get()))
+            cn_combo.pack(side=tk.LEFT, padx=5)
+            note_combos.append(cn_combo)
+
+            tk.Label(note_frame, text="Octave:", bg="#1e1e1e", fg="white", width=8, anchor="w").pack(side=tk.LEFT, padx=(10,0))
+            co_var = tk.IntVar(value=drone.cycle_octaves[i])
+            co_spinbox = tk.Spinbox(note_frame, from_=0, to=8, textvariable=co_var, width=5,
+                                   command=lambda idx=i, var=co_var: self._update_cycle_octave(drone, idx, var.get()))
+            co_spinbox.pack(side=tk.LEFT, padx=5)
+            octave_spinboxes.append(co_var)  # Store the IntVar for later updates
+
+        # Cycle-specific controls (only visible in cycle mode)
+        cycle_controls = tk.Frame(content, bg="#1e1e1e")
+        if drone.mode == "cycle":
+            cycle_controls.pack(fill=tk.X, pady=5)
+
+        # Cycle duration
+        dur_frame = tk.Frame(cycle_controls, bg="#1e1e1e")
+        dur_frame.pack(fill=tk.X, pady=2)
+        tk.Label(dur_frame, text="Note Duration:", bg="#1e1e1e", fg="white", width=14, anchor="w").pack(side=tk.LEFT)
+        self._create_param_slider(dur_frame, 100, 20000, drone.cycle_duration, 50,
+                                 callback=lambda v: setattr(drone, 'cycle_duration', int(float(v))))
+        tk.Label(dur_frame, text="ms", bg="#1e1e1e", fg="white").pack(side=tk.LEFT, padx=5)
+
+        # Pause between triggers
+        pause_frame = tk.Frame(cycle_controls, bg="#1e1e1e")
+        pause_frame.pack(fill=tk.X, pady=2)
+        tk.Label(pause_frame, text="Pause Between:", bg="#1e1e1e", fg="white", width=14, anchor="w").pack(side=tk.LEFT)
+        self._create_param_slider(pause_frame, 0, 20000, drone.cycle_pause, 50,
+                                 callback=lambda v: setattr(drone, 'cycle_pause', int(float(v))))
+        tk.Label(pause_frame, text="ms", bg="#1e1e1e", fg="white").pack(side=tk.LEFT, padx=5)
+
+        # Store UI reference
+        self.active_drone_uis.append({
+            "index": drone_id,
+            "frame": dr_frame,
+            "cycle_controls": cycle_controls,
+            "note_controls": note_controls,
+            "content": content,
+            "arrow": arrow,
+            "collapsed": collapsed,
+            "midi_indicator": midi_indicator,
+            "note_combos": note_combos,  # For auto note update
+            "octave_spinboxes": octave_spinboxes,  # For auto octave update
+            "mode_var": mode_var,  # For mode state tracking
+            "pattern_label": pattern_label,  # For showing/hiding in mode switch
+            "pattern_combo": pattern_combo  # For showing/hiding in mode switch
+        })
+
+        self.log(f"Added {drone.name}")
+
+    def _update_drone_mode_ui(self, drone_id):
+        """Toggle visibility of cycle-specific controls based on mode."""
+        for ui_data in self.active_drone_uis:
+            if ui_data["index"] == drone_id:
+                drone = self.drone_configs[drone_id]
+                if drone.mode == "static":
+                    # Hide cycle-specific controls (duration/pause sliders and pattern selector)
+                    ui_data["cycle_controls"].pack_forget()
+                    ui_data["pattern_label"].pack_forget()
+                    ui_data["pattern_combo"].pack_forget()
+                else:
+                    # Show cycle-specific controls (duration/pause sliders and pattern selector)
+                    ui_data["cycle_controls"].pack(fill=tk.X, pady=5)
+                    ui_data["pattern_label"].pack(side=tk.LEFT, padx=(10, 5))
+                    ui_data["pattern_combo"].pack(side=tk.LEFT, padx=5)
+                break
+
+    def _update_cycle_note(self, drone, idx, note_name):
+        """Update a cycle note (just the note, not octave)."""
+        # note_name is just the note like "C", "C#", "D", etc.
+        drone.cycle_notes[idx] = NOTES.index(note_name)
+
+    def _update_cycle_octave(self, drone, idx, octave):
+        """Update a cycle octave."""
+        drone.cycle_octaves[idx] = octave
+
+    def _update_drone_auto_notes(self, drone, drone_id):
+        """Update drone notes from current scale (auto mode) - simplified version.
+
+        Derives notes directly from the chosen root and scale pattern.
+        Each pattern index maps directly to a scale degree.
+        """
+        # Get current scale root and intervals
+        r_idx = NOTES.index(self.root_var.get())
+        intervals = SCALES[self.scale_var.get()]
+
+        # Generate scale notes (just the note numbers 0-11)
+        scale_notes = []
+        for iv in intervals:
+            scale_notes.append((r_idx + iv) % 12)
+
+        # Get the pattern
+        pattern = drone.cycle_pattern
+        if pattern not in DRONE_PATTERNS:
+            pattern = "Up"  # Fallback
+
+        pattern_value = DRONE_PATTERNS[pattern]
+
+        # Base octave for all notes
+        base_octave = 4  # Octave 4 contains middle C
+
+        # Handle random pattern
+        if pattern_value == "random":
+            import random
+            # Random order of indices 0-3
+            pattern_indices = [0, 1, 2, 3]
+            random.shuffle(pattern_indices)
+        else:
+            pattern_indices = pattern_value
+
+        # For simplified patterns, pattern_indices are just [0,1,2,3] or [3,2,1,0]
+        # These refer to the 4 scale degrees directly
+        selected_notes = []
+        selected_octaves = []
+
+        for idx in pattern_indices:
+            # Use first 4 scale degrees
+            if idx < len(scale_notes):
+                selected_notes.append(scale_notes[idx])
+                selected_octaves.append(base_octave)
+            else:
+                # Wrap around
+                selected_notes.append(scale_notes[idx % len(scale_notes)])
+                selected_octaves.append(base_octave)
+
+        # Ensure we have exactly 4 notes
+        while len(selected_notes) < 4:
+            selected_notes.append(scale_notes[0])
+            selected_octaves.append(base_octave)
+
+        drone.cycle_notes = selected_notes[:4]
+        drone.cycle_octaves = selected_octaves[:4]
+
+        # Update UI comboboxes and spinboxes
+        for ui_data in self.active_drone_uis:
+            if ui_data["index"] == drone_id:
+                note_combos = ui_data.get("note_combos", [])
+                octave_spinboxes = ui_data.get("octave_spinboxes", [])
+
+                for i in range(min(4, len(note_combos))):
+                    if i < len(drone.cycle_notes):
+                        # Update note combobox (just the note name, not octave)
+                        note_combos[i].set(NOTES[drone.cycle_notes[i]])
+
+                        # Update octave spinbox
+                        if i < len(octave_spinboxes):
+                            octave_spinboxes[i].set(drone.cycle_octaves[i])
+                break
+
+    def pick_channel_color(self, channel_idx, header, arrow, name_entry, midi_ch_label):
+        """Open color picker dialog for channel and update all header elements."""
+        from tkinter import colorchooser
+        cfg = self.channel_configs[channel_idx]
+        color = colorchooser.askcolor(title="Choose Channel Color", initialcolor=cfg.display_color)
+        if color[1]:  # color[1] is the hex string
+            cfg.display_color = color[1]
+            # Update all header elements with new color
+            header.config(bg=color[1])
+            arrow.config(bg=color[1])
+            name_entry.config(bg=color[1])
+            midi_ch_label.config(bg=color[1])
+            # Also update the color picker button itself
+            for ui_data in self.active_channel_uis:
+                if ui_data["index"] == channel_idx:
+                    # Find and update the color button in the header
+                    for child in header.winfo_children():
+                        if isinstance(child, tk.Button) and child.cget("text") == "🎨":
+                            child.config(bg=color[1])
+                            break
+                    break
+            # Update the virtual piano's key colors for this channel
+            if hasattr(self, 'piano') and hasattr(self, 'midi_monitor'):
+                # Update key_colors for all notes currently using this MIDI channel
+                note_channels = self.midi_monitor.get_note_channels()
+                for note, midi_ch in note_channels.items():
+                    if midi_ch == cfg.midi_channel:
+                        self.piano.key_colors[note] = color[1]
+                # Redraw active keys with new color
+                self.piano.redraw()
+
+    def pick_drone_color(self, drone_id, header, arrow, checkbox, name_entry, midi_ch_label, midi_indicator):
+        """Open color picker dialog for drone and update all header elements."""
+        from tkinter import colorchooser
+        drone = self.drone_configs[drone_id]
+        color = colorchooser.askcolor(title="Choose Drone Color", initialcolor=drone.display_color)
+        if color[1]:  # color[1] is the hex string
+            drone.display_color = color[1]
+            # Update all header elements with new color
+            header.config(bg=color[1])
+            arrow.config(bg=color[1])
+            checkbox.config(bg=color[1], activebackground=color[1])
+            name_entry.config(bg=color[1])
+            midi_ch_label.config(bg=color[1])
+            midi_indicator.config(bg=color[1])
+            # Also update the color picker button itself
+            for child in header.winfo_children():
+                if isinstance(child, tk.Button) and child.cget("text") == "🎨":
+                    child.config(bg=color[1])
+                    break
+            # Update the virtual piano's key colors for drone notes
+            if hasattr(self, 'piano'):
+                # Update key_colors for all notes currently in drone_note_colors
+                for note, note_color in self.drone_note_colors.items():
+                    # Check if this note belongs to this drone
+                    if drone_id < len(self.drone_configs):
+                        drone = self.drone_configs[drone_id]
+                        # Check if any of this drone's notes match
+                        for i in range(4):
+                            if drone.cycle_note_enabled[i]:
+                                drone_note = drone.get_effective_note(drone.cycle_notes[i], drone.cycle_octaves[i])
+                                if drone_note == note:
+                                    self.piano.key_colors[note] = color[1]
+                                    self.drone_note_colors[note] = color[1]
+                # Redraw active keys with new color
+                self.piano.redraw()
+
+    def remove_drone_ui(self, drone_id, frame):
+        """Remove a drone UI and configuration."""
+        frame.destroy()
+        if drone_id < len(self.drone_configs):
+            self.drone_configs[drone_id].enabled = False
+        for i, ui_data in enumerate(self.active_drone_uis):
+            if ui_data["index"] == drone_id:
+                self.active_drone_uis.pop(i)
+                break
+        self.log(f"Removed drone {drone_id + 1}")
+
+    def collapse_all_drones(self):
+        """Collapse all drone configuration panels."""
+        for ui_data in self.active_drone_uis:
+            # Collapse if not already collapsed
+            if not ui_data["collapsed"].get():
+                ui_data["content"].pack_forget()
+                ui_data["arrow"].config(text="▶")
+                ui_data["collapsed"].set(True)
+
+    # ========================================================================
     # CORE LOGIC
     # ========================================================================
 
@@ -2148,10 +3182,23 @@ class App:
             self.btn_run.config(bg="#f44336", text="⏹ STOP MIDI", activebackground="#e53935")
             self.status_midi.config(text="MIDI: Running ●", fg="#4CAF50")
             self.log("MIDI Active - Motion detection running")
+            # Start all enabled drones
+            self.start_drones()
         else:
             self.btn_run.config(bg="#4CAF50", text="▶ START MIDI", activebackground="#45a049")
             self.status_midi.config(text="MIDI: Ready ○", fg="#888")
+            # Stop all drones first
+            self.stop_drones()
             self.midi.panic()
+            # Release all sustain pedals
+            for channel in list(self.sustain_pedal_states.keys()):
+                if self.sustain_pedal_states[channel] is not None:
+                    self.midi.send_cc(channel, 64, 0)  # Release sustain pedal
+                    self.sustain_pedal_states[channel] = None
+            # Clear modulation locks
+            self.channel_active_notes.clear()
+            self.channel_locked_modwheel.clear()
+            self.channel_locked_pitchbend.clear()
             self.log("MIDI Stopped")
 
     def update_scale_pool(self):
@@ -2198,7 +3245,8 @@ class App:
                 "motion_border_color": getattr(self, 'motion_border_color', (0, 255, 0)),
                 "blob_color_on": getattr(self, 'blob_color_on', (0, 0, 255)),
             },
-            "channels": [cfg.to_dict() for cfg in self.channel_configs]
+            "channels": [cfg.to_dict() for cfg in self.channel_configs],
+            "drones": [drone.to_dict() for drone in self.drone_configs]
         }
 
     def save_preset(self):
@@ -2277,7 +3325,20 @@ class App:
                     self.channel_configs[i] = cfg
                     if cfg.enabled:
                         self.add_channel_ui(target_idx=i)
-                        
+
+        # Load drones
+        for ui_data in list(self.active_drone_uis):
+            ui_data["frame"].destroy()
+        self.active_drone_uis = []
+        self.drone_configs = []
+
+        if "drones" in preset_data:
+            for drone_data in preset_data["drones"]:
+                drone = DroneConfig.from_dict(drone_data)
+                self.drone_configs.append(drone)
+                # Always add UI for all drones in preset, not just enabled ones
+                self.add_drone_ui(existing_drone=drone)
+
         self.update_scale_pool()
 
     def _try_load_default_preset(self):
@@ -2337,6 +3398,18 @@ class App:
         w, h = 640, 480
         move_thresh = self.var_trigger.get()
 
+        # Check for sustain pedal releases (process all channels)
+        current_time = time.time()
+        for cfg in self.channel_configs:
+            if cfg.sustain_enabled and cfg.midi_channel in self.sustain_pedal_states:
+                pedal_down_time = self.sustain_pedal_states[cfg.midi_channel]
+                if pedal_down_time is not None:
+                    elapsed_ms = (current_time - pedal_down_time) * 1000.0
+                    if elapsed_ms >= cfg.sustain_duration:
+                        # Release the pedal
+                        self.midi.send_cc(cfg.midi_channel, 64, 0)  # CC64 = sustain pedal, 0 = off
+                        self.sustain_pedal_states[cfg.midi_channel] = None  # Mark as released
+
         for b in self.blobs.values():
             b.lfo_phase += dt * b.lfo_rate
             lfo_val = math.sin(b.lfo_phase)
@@ -2388,7 +3461,6 @@ class App:
                                                          blend=0.5, size_range=(self.var_size.get(), 5000),
                                                          speed_range=(0, 50))
 
-                            # Send initial CC values BEFORE note-on to prevent jitter
                             # Initialize smoothed CC storage for this config if needed
                             if cfg.config_id not in b.smoothed_cc_values:
                                 b.smoothed_cc_values[cfg.config_id] = {}
@@ -2397,30 +3469,37 @@ class App:
                             if cfg.midi_channel not in self.last_sent_cc:
                                 self.last_sent_cc[cfg.midi_channel] = {}
 
-                            # Send last-known CC values to ensure smooth continuation
-                            # Modwheel (CC1)
-                            if cfg.modwheel_enabled and 1 in self.last_sent_cc[cfg.midi_channel]:
-                                self.midi.send_cc(cfg.midi_channel, 1, self.last_sent_cc[cfg.midi_channel][1])
+                            # Modulation locking - lock modwheel/pitchbend on first note to prevent jitter
+                            if cfg.midi_channel not in self.channel_active_notes:
+                                self.channel_active_notes[cfg.midi_channel] = 0
 
-                            # Pan (CC10)
-                            if 10 in self.last_sent_cc[cfg.midi_channel]:
-                                self.midi.send_cc(cfg.midi_channel, 10, self.last_sent_cc[cfg.midi_channel][10])
+                            is_first_note = (self.channel_active_notes[cfg.midi_channel] == 0)
 
-                            # Volume (CC11)
-                            if 11 in self.last_sent_cc[cfg.midi_channel]:
-                                self.midi.send_cc(cfg.midi_channel, 11, self.last_sent_cc[cfg.midi_channel][11])
+                            if is_first_note:
+                                # This is the first note on this channel - lock modulation values
+                                if cfg.modwheel_enabled:
+                                    modwheel_val = calculate_modulation(b, lfo_val, "modwheel", cfg.modwheel_depth)
+                                    self.channel_locked_modwheel[cfg.midi_channel] = modwheel_val
+                                    self.midi.send_cc(cfg.midi_channel, 1, modwheel_val)
 
-                            # Filter (CC74)
-                            if 74 in self.last_sent_cc[cfg.midi_channel]:
-                                self.midi.send_cc(cfg.midi_channel, 74, self.last_sent_cc[cfg.midi_channel][74])
+                                if cfg.pitchbend_enabled:
+                                    pitchbend_val = calculate_modulation(b, lfo_val, "pitchbend", cfg.pitchbend_depth)
+                                    self.channel_locked_pitchbend[cfg.midi_channel] = pitchbend_val
+                                    self.midi.send_pitchbend(cfg.midi_channel, pitchbend_val)
 
-                            # Pitchbend
-                            if cfg.pitchbend_enabled and cfg.midi_channel in self.last_sent_pitchbend:
-                                self.midi.send_pitchbend(cfg.midi_channel, self.last_sent_pitchbend[cfg.midi_channel])
+                            # Sustain pedal (CC64) - only send if enabled and pedal is not already down
+                            if cfg.sustain_enabled:
+                                if cfg.midi_channel not in self.sustain_pedal_states or self.sustain_pedal_states[cfg.midi_channel] is None:
+                                    # Pedal is not down, press it
+                                    self.midi.send_cc(cfg.midi_channel, 64, 127)  # CC64 = sustain pedal, 127 = on
+                                    self.sustain_pedal_states[cfg.midi_channel] = time.time()  # Track when pedal was pressed
 
                             self.midi.note_on(cfg.midi_channel, target, velocity)
                             b.playing_notes[cfg.config_id] = target
                             b.note_start_times[cfg.config_id] = time.time()  # Track start time for duration enforcement
+
+                            # Increment active note count for this channel
+                            self.channel_active_notes[cfg.midi_channel] += 1
 
                             # Initialize arpeggiator state if enabled
                             if cfg.arp_mode != "OFF":
@@ -2495,32 +3574,36 @@ class App:
 
                                     return smoothed_value
 
-                                # Modulation CC
-                                if cfg.modwheel_enabled and cfg.modwheel_depth > 0:
-                                    modwheel_val = calculate_modulation(b, lfo_val, "modwheel", cfg.modwheel_depth)
-                                    smoothed_modwheel = smooth_cc(1, modwheel_val)
-                                    self.midi.send_cc(cfg.midi_channel, 1, smoothed_modwheel)
+                                # Modulation CC - SKIP if channel has active notes (locked to prevent jitter)
+                                channel_has_notes = self.channel_active_notes.get(cfg.midi_channel, 0) > 0
 
-                                if cfg.pitchbend_enabled and cfg.pitchbend_depth > 0:
-                                    pitchbend_val = calculate_modulation(b, lfo_val, "pitchbend", cfg.pitchbend_depth)
+                                if not channel_has_notes:
+                                    # No notes playing - update modulation normally
+                                    if cfg.modwheel_enabled and cfg.modwheel_depth > 0:
+                                        modwheel_val = calculate_modulation(b, lfo_val, "modwheel", cfg.modwheel_depth)
+                                        smoothed_modwheel = smooth_cc(1, modwheel_val)
+                                        self.midi.send_cc(cfg.midi_channel, 1, smoothed_modwheel)
 
-                                    if 'pitchbend' not in b.smoothed_cc_values[cfg.config_id]:
-                                        # Initialize to last-sent pitchbend for this channel, or 0 (center) if never sent
-                                        last_pb = self.last_sent_pitchbend.get(cfg.midi_channel, 0)
-                                        b.smoothed_cc_values[cfg.config_id]['pitchbend'] = float(last_pb)
+                                    if cfg.pitchbend_enabled and cfg.pitchbend_depth > 0:
+                                        pitchbend_val = calculate_modulation(b, lfo_val, "pitchbend", cfg.pitchbend_depth)
 
-                                    # Always smooth toward target
-                                    current_pb = b.smoothed_cc_values[cfg.config_id]['pitchbend']
-                                    b.smoothed_cc_values[cfg.config_id]['pitchbend'] = current_pb + alpha * (pitchbend_val - current_pb)
+                                        if 'pitchbend' not in b.smoothed_cc_values[cfg.config_id]:
+                                            # Initialize to last-sent pitchbend for this channel, or 0 (center) if never sent
+                                            last_pb = self.last_sent_pitchbend.get(cfg.midi_channel, 0)
+                                            b.smoothed_cc_values[cfg.config_id]['pitchbend'] = float(last_pb)
 
-                                    smoothed_pitchbend = int(b.smoothed_cc_values[cfg.config_id]['pitchbend'])
-                                    # Clamp to valid pitchbend range
-                                    smoothed_pitchbend = max(-8192, min(8191, smoothed_pitchbend))
+                                        # Always smooth toward target
+                                        current_pb = b.smoothed_cc_values[cfg.config_id]['pitchbend']
+                                        b.smoothed_cc_values[cfg.config_id]['pitchbend'] = current_pb + alpha * (pitchbend_val - current_pb)
 
-                                    # Track last-sent pitchbend globally
-                                    self.last_sent_pitchbend[cfg.midi_channel] = smoothed_pitchbend
+                                        smoothed_pitchbend = int(b.smoothed_cc_values[cfg.config_id]['pitchbend'])
+                                        # Clamp to valid pitchbend range
+                                        smoothed_pitchbend = max(-8192, min(8191, smoothed_pitchbend))
 
-                                    self.midi.send_pitchbend(cfg.midi_channel, smoothed_pitchbend)
+                                        # Track last-sent pitchbend globally
+                                        self.last_sent_pitchbend[cfg.midi_channel] = smoothed_pitchbend
+
+                                        self.midi.send_pitchbend(cfg.midi_channel, smoothed_pitchbend)
 
                                 # Positional CC with smoothing
                                 smoothed_pan = smooth_cc(10, pan)
@@ -2555,8 +3638,20 @@ class App:
                                 note = b.playing_notes[cfg.config_id]
                                 self.midi.note_off(cfg.midi_channel, note)
 
-                                if cfg.pitchbend_enabled:
-                                    self.midi.send_pitchbend(cfg.midi_channel, 0)
+                                # Decrement active note count for this channel
+                                if cfg.midi_channel in self.channel_active_notes:
+                                    self.channel_active_notes[cfg.midi_channel] -= 1
+                                    # If no more notes are active, unlock modulation and reset pitchbend
+                                    if self.channel_active_notes[cfg.midi_channel] <= 0:
+                                        self.channel_active_notes[cfg.midi_channel] = 0
+                                        # Clear locked modulation values
+                                        if cfg.midi_channel in self.channel_locked_modwheel:
+                                            del self.channel_locked_modwheel[cfg.midi_channel]
+                                        if cfg.midi_channel in self.channel_locked_pitchbend:
+                                            del self.channel_locked_pitchbend[cfg.midi_channel]
+                                        # Reset pitchbend to center
+                                        if cfg.pitchbend_enabled:
+                                            self.midi.send_pitchbend(cfg.midi_channel, 0)
 
                                 notes_to_release.append(cfg.config_id)
 
@@ -2574,10 +3669,159 @@ class App:
                         b.channel_configs = []
                         b.state = "OFF"
 
+    # ========================================================================
+    # DRONE PLAYBACK
+    # ========================================================================
+
+    def start_drones(self):
+        """Start all enabled drones."""
+        current_time = time.time()
+        for drone in self.drone_configs:
+            if drone.enabled:
+                self.drone_states[drone.drone_id] = {
+                    "current_note": None,
+                    "cycle_index": 0,
+                    "next_change_time": current_time,
+                    "note_off_time": None
+                }
+                # Immediately start first note
+                self._update_drone(drone, current_time, force_start=True)
+
+    def stop_drones(self):
+        """Stop all drones and release notes."""
+        for drone in self.drone_configs:
+            if drone.drone_id in self.drone_states:
+                state = self.drone_states[drone.drone_id]
+                if state["current_note"] is not None:
+                    # Handle both list (static mode) and single note (cycle mode)
+                    notes_to_release = state["current_note"] if isinstance(state["current_note"], list) else [state["current_note"]]
+                    for note in notes_to_release:
+                        self.midi.note_off(drone.midi_channel, note)
+                        # Remove drone color tracking
+                        if note in self.drone_note_colors:
+                            del self.drone_note_colors[note]
+                # Reset indicator
+                self._update_drone_indicator(drone.drone_id, False)
+        self.drone_states.clear()
+
+    def update_drones(self, current_time):
+        """Update all active drones (called from update_loop)."""
+        if not self.midi_active:
+            return
+
+        for drone in self.drone_configs:
+            if drone.enabled and drone.drone_id in self.drone_states:
+                self._update_drone(drone, current_time)
+
+    def _update_drone(self, drone, current_time, force_start=False):
+        """Update a single drone's playback."""
+        state = self.drone_states[drone.drone_id]
+
+        # For cycle mode, check if we need to release the note after duration (before pause)
+        if drone.mode == "cycle" and state.get("note_off_time") is not None:
+            if current_time >= state["note_off_time"] and state["current_note"] is not None:
+                # Release the note
+                self.midi.note_off(drone.midi_channel, state["current_note"])
+                if state["current_note"] in self.drone_note_colors:
+                    del self.drone_note_colors[state["current_note"]]
+                state["current_note"] = None
+                state["note_off_time"] = None
+                self._update_drone_indicator(drone.drone_id, False)
+
+        # Check if it's time to change notes (for cycle mode) or start (for static mode)
+        if current_time < state["next_change_time"] and not force_start:
+            return
+
+        # Determine next note(s) based on mode
+        if drone.mode == "static":
+            # Static mode - only start notes once, never release them
+            # If notes are already playing, don't do anything
+            if state["current_note"] is not None and not force_start:
+                return
+            # Static mode - play all enabled notes simultaneously
+            # Update notes from scale if auto mode is enabled
+            if drone.cycle_auto_notes:
+                self._update_drone_auto_notes(drone, drone.drone_id)
+
+            # Play all enabled notes
+            active_notes = []
+            for i in range(4):
+                if drone.cycle_note_enabled[i]:
+                    note = drone.get_effective_note(drone.cycle_notes[i], drone.cycle_octaves[i])
+                    self.midi.note_on(drone.midi_channel, note, drone.velocity)
+                    active_notes.append(note)
+                    # Track drone note color for keyboard visualization
+                    self.drone_note_colors[note] = drone.display_color
+
+            if active_notes:
+                state["current_note"] = active_notes  # Store as list
+                self._update_drone_indicator(drone.drone_id, True)
+
+            # For static mode, no next change time (plays forever)
+            state["next_change_time"] = float('inf')
+            state["note_off_time"] = None
+        else:
+            # Cycle mode - rotate through enabled notes
+            # Release current note if playing (for cycle mode when changing)
+            if state["current_note"] is not None:
+                self.midi.note_off(drone.midi_channel, state["current_note"])
+                # Remove drone color tracking when note is released
+                if state["current_note"] in self.drone_note_colors:
+                    del self.drone_note_colors[state["current_note"]]
+                state["current_note"] = None
+                self._update_drone_indicator(drone.drone_id, False)
+
+            # Update notes from scale if auto mode is enabled
+            if drone.cycle_auto_notes:
+                self._update_drone_auto_notes(drone, drone.drone_id)
+
+            # Find next enabled note
+            attempts = 0
+            while attempts < 4:
+                idx = state["cycle_index"]
+                if drone.cycle_note_enabled[idx]:
+                    # This note is enabled, play it
+                    note = drone.get_effective_note(drone.cycle_notes[idx], drone.cycle_octaves[idx])
+                    self.midi.note_on(drone.midi_channel, note, drone.velocity)
+                    state["current_note"] = note  # Single note
+                    self._update_drone_indicator(drone.drone_id, True)
+                    # Track drone note color for keyboard visualization
+                    self.drone_note_colors[note] = drone.display_color
+
+                    # Schedule note off after duration
+                    duration_s = drone.cycle_duration / 1000.0
+                    pause_s = drone.cycle_pause / 1000.0
+                    state["note_off_time"] = current_time + duration_s
+
+                    # Schedule next note start (duration + pause)
+                    state["next_change_time"] = current_time + duration_s + pause_s
+                    state["cycle_index"] = (idx + 1) % 4
+                    break
+                else:
+                    # Skip this note, try next
+                    state["cycle_index"] = (idx + 1) % 4
+                    attempts += 1
+
+            # If no enabled notes found, don't play anything
+            if attempts >= 4:
+                state["next_change_time"] = current_time + ((drone.cycle_duration + drone.cycle_pause) / 1000.0)
+                state["note_off_time"] = None
+
+    def _update_drone_indicator(self, drone_id, active):
+        """Update MIDI activity indicator for a drone."""
+        for ui_data in self.active_drone_uis:
+            if ui_data["index"] == drone_id:
+                color = "#4CAF50" if active else "#555555"
+                ui_data["midi_indicator"].config(fg=color)
+                break
+
     def update_loop(self):
         curr_time = time.time()
         dt = curr_time - self.last_time
         self.last_time = curr_time
+
+        # Update drones (cycle mode transitions)
+        self.update_drones(curr_time)
 
         # Update keyboard fade states for smooth transitions
         self.update_key_fades(dt, fade_speed=10.0)
@@ -2617,6 +3861,7 @@ class App:
             dets = []
             min_a = self.var_size.get()
 
+            # Store detections with their hulls for blob association
             for c in contours:
                 area = cv2.contourArea(c)
                 if area > min_a:
@@ -2625,41 +3870,52 @@ class App:
                         cx, cy = int(M["m10"]/M["m00"]), int(M["m01"]/M["m00"])
                     else:
                         cx, cy = 0, 0
-                    dets.append((cx, cy, area))
                     hull = cv2.convexHull(c)
-                    # Use customizable motion border color
-                    motion_color = getattr(self, 'motion_border_color', (0, 255, 0))
-                    cv2.drawContours(frame, [hull], -1, motion_color, 1)
+                    dets.append((cx, cy, area, hull))  # Include hull in detection
 
             self.track_blobs(dets)
             if self.midi_active:
                 self.process_logic(dt, frame_hsv)
                 self.detect_collisions()
 
+            # Draw detection borders (if enabled)
+            if self.detection_borders_toggle.get():
+                # Draw smoothed motion borders for calmer visualization
+                motion_color = getattr(self, 'motion_border_color', (0, 255, 0))
+                for b in self.blobs.values():
+                    if b.smoothed_hull is not None:
+                        # Convert smoothed hull back to int32 for drawing
+                        smoothed_hull_int = b.smoothed_hull.astype(np.int32)
+                        cv2.drawContours(frame, [smoothed_hull_int], -1, motion_color, 1)
+
+                for b in self.blobs.values():
+                    if len(b.trail) > 1:
+                        pts = np.array(b.trail, np.int32).reshape((-1, 1, 2))
+                        cv2.polylines(frame, [pts], False, (0, 255, 255), 1)
+
+            # Draw detection circles (if enabled)
+            if self.detection_circles_toggle.get():
+                for b in self.blobs.values():
+                    # State-based color for blob circle with 20ms fade to red
+                    # Use customizable colors if available, otherwise fallback to defaults
+                    off_color = getattr(self, 'blob_color_off', BLOB_COLOR_OFF)
+                    on_color = getattr(self, 'blob_color_on', BLOB_COLOR_ON)
+
+                    if b.state == "OFF":
+                        blob_color = off_color
+                    elif b.state in ("ATTACK", "ON", "RELEASE"):
+                        # Fade from OFF color to ON color over 20ms
+                        fade_progress = min(1.0, b.color_fade_timer / 0.02)  # 0.02 = 20ms
+                        blob_color = interpolate_color(off_color, on_color, fade_progress)
+                    else:
+                        blob_color = (128, 128, 128)  # Gray fallback
+
+                    # Draw blob circle with state-based color (fine 1px border)
+                    cv2.circle(frame, (int(b.smooth_x), int(b.smooth_y)),
+                               int(math.sqrt(b.smooth_area)/2) + 1, blob_color, 1)
+
+            # Minimalistic channel indicator - only show when notes are playing (separate from borders)
             for b in self.blobs.values():
-                if len(b.trail) > 1:
-                    pts = np.array(b.trail, np.int32).reshape((-1, 1, 2))
-                    cv2.polylines(frame, [pts], False, (0, 255, 255), 1)
-
-                # State-based color for blob border with 20ms fade to red
-                # Use customizable colors if available, otherwise fallback to defaults
-                off_color = getattr(self, 'blob_color_off', BLOB_COLOR_OFF)
-                on_color = getattr(self, 'blob_color_on', BLOB_COLOR_ON)
-
-                if b.state == "OFF":
-                    blob_color = off_color
-                elif b.state in ("ATTACK", "ON", "RELEASE"):
-                    # Fade from OFF color to ON color over 20ms
-                    fade_progress = min(1.0, b.color_fade_timer / 0.02)  # 0.02 = 20ms
-                    blob_color = interpolate_color(off_color, on_color, fade_progress)
-                else:
-                    blob_color = (128, 128, 128)  # Gray fallback
-
-                # Draw blob border with state-based color (fine 1px border)
-                cv2.circle(frame, (int(b.smooth_x), int(b.smooth_y)),
-                           int(math.sqrt(b.smooth_area)/2) + 1, blob_color, 1)
-
-                # Minimalistic channel indicator - only show when notes are playing
                 if b.channel_configs and self.notes_toggle.get() and b.playing_notes:
                     # Show how many channels are actively playing notes
                     active_count = len(b.playing_notes)
@@ -2720,7 +3976,9 @@ class App:
                     best_d = dist
                     best_i = i
             if best_i != -1:
-                b.update(*dets[best_i], 0.1)
+                det = dets[best_i]
+                # Pass hull as keyword argument (det now has 4 elements: x, y, area, hull)
+                b.update(det[0], det[1], det[2], 0.1, hull=det[3], hull_smoothing=self.hull_smoothing_var.get())
                 used.add(best_i)
                 active.append(bid)
 
@@ -2739,7 +3997,10 @@ class App:
 
         for i, d in enumerate(dets):
             if i not in used and len(self.blobs) < 15:
-                self.blobs[self.next_id] = BlobEntity(self.next_id, *d)
+                # Create new blob (d has 4 elements: x, y, area, hull - only pass first 3 to constructor)
+                blob = BlobEntity(self.next_id, d[0], d[1], d[2])
+                blob.smoothed_hull = d[3].astype(np.float32)  # Initialize with first hull
+                self.blobs[self.next_id] = blob
                 self.next_id += 1
 
     def __del__(self):
