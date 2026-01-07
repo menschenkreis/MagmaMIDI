@@ -19,6 +19,38 @@ from threading import Lock
 from typing import Optional, Dict, List, Tuple
 
 # ============================================================================
+# TOOLTIP HELPER
+# ============================================================================
+
+class ToolTip:
+    """Creates a tooltip for a given widget"""
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tooltip_window = None
+        self.widget.bind("<Enter>", self.show_tooltip)
+        self.widget.bind("<Leave>", self.hide_tooltip)
+
+    def show_tooltip(self, event=None):
+        if self.tooltip_window or not self.text:
+            return
+        x = self.widget.winfo_rootx() + 20
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+        self.tooltip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        label = tk.Label(tw, text=self.text, justify=tk.LEFT,
+                        background="#ffffe0", foreground="black",
+                        relief=tk.SOLID, borderwidth=1,
+                        font=("Arial", 9), padx=5, pady=3)
+        label.pack()
+
+    def hide_tooltip(self, event=None):
+        if self.tooltip_window:
+            self.tooltip_window.destroy()
+            self.tooltip_window = None
+
+# ============================================================================
 # CONSTANTS & CONFIGURATION
 # ============================================================================
 
@@ -154,7 +186,7 @@ def calculate_velocity(blob, mode: str, min_vel: int, max_vel: int, curve: str,
 
     curved_value = apply_velocity_curve(raw_value, curve)
     velocity = int(min_vel + (curved_value * (max_vel - min_vel)))
-    return max(1, min(127, velocity))
+    return max(min_vel, min(max_vel, velocity))
 
 def calculate_modulation(blob, lfo_val: float, mod_type: str, depth: float) -> int:
     """Calculate modulation value from blob speed + LFO.
@@ -956,6 +988,10 @@ class App:
         # Keyboard fade states for smooth transitions
         self.key_fade_states = {}  # {note_number: fade_value (0.0-1.0)}
 
+        # Global CC state tracking for smooth transitions across blob deletion/recreation
+        self.last_sent_cc: Dict[int, Dict[int, int]] = {}      # {midi_channel: {cc_num: value}}
+        self.last_sent_pitchbend: Dict[int, int] = {}          # {midi_channel: pitchbend_value}
+
         # Channel configurations
         self.channel_configs = [ChannelConfig(i) for i in range(16)]
         self.active_channel_uis: List[Dict] = []
@@ -1047,6 +1083,24 @@ class App:
         # Bind to all children recursively
         for child in widget.winfo_children():
             self._bind_mouse_scroll_recursive(child, canvas)
+
+    def _create_label_with_info(self, parent, text, tooltip_text, width=15, anchor="w", bg="#2b2b2b"):
+        """Creates a label with an info icon that shows tooltip on hover"""
+        frame = tk.Frame(parent, bg=bg)
+        frame.pack(side=tk.LEFT)
+
+        # Main label text
+        label = tk.Label(frame, text=text, bg=bg, fg="white", width=width, anchor=anchor)
+        label.pack(side=tk.LEFT)
+
+        # Info icon
+        if tooltip_text:
+            info_icon = tk.Label(frame, text=" ⓘ", bg=bg, fg="#888888",
+                                font=("Arial", 10), cursor="question_arrow")
+            info_icon.pack(side=tk.LEFT)
+            ToolTip(info_icon, tooltip_text)
+
+        return frame
 
     def _create_param_slider(self, parent, min_val, max_val, default_val, resolution, var_type=tk.IntVar, callback=None, indicator=None):
         """
@@ -1209,14 +1263,18 @@ class App:
     def _create_brightness_control(self, parent):
         frame = tk.Frame(parent, bg="#1e1e1e")
         frame.pack(fill=tk.X, pady=2)
-        tk.Label(frame, text="Brightness:", bg="#1e1e1e", fg="white", width=10, anchor="w").pack(side=tk.LEFT)
-        self.var_brightness = self._create_param_slider(frame, -100, 100, 0, 1, indicator="(High=Bright)")
+        self._create_label_with_info(frame, "Brightness:",
+                                    "Adjusts image brightness.\nHigher values = brighter image",
+                                    width=10, bg="#1e1e1e")
+        self.var_brightness = self._create_param_slider(frame, -100, 100, 0, 1)
 
     def _create_contrast_control(self, parent):
         frame = tk.Frame(parent, bg="#1e1e1e")
         frame.pack(fill=tk.X, pady=2)
-        tk.Label(frame, text="Contrast:", bg="#1e1e1e", fg="white", width=10, anchor="w").pack(side=tk.LEFT)
-        self.var_contrast = self._create_param_slider(frame, 0, 200, 100, 1, indicator="(High=Vivid)")
+        self._create_label_with_info(frame, "Contrast:",
+                                    "Adjusts image contrast.\nHigher values = more vivid/contrasty image",
+                                    width=10, bg="#1e1e1e")
+        self.var_contrast = self._create_param_slider(frame, 0, 200, 100, 1)
 
     def _create_overlay_toggles(self, parent):
         frame = tk.Frame(parent, bg="#1e1e1e")
@@ -1258,25 +1316,33 @@ class App:
     def _create_motion_threshold_control(self, parent):
         frame = tk.Frame(parent, bg="#1e1e1e")
         frame.pack(fill=tk.X, pady=2)
-        tk.Label(frame, text="Det. Thresh:", bg="#1e1e1e", fg="white", width=10, anchor="w").pack(side=tk.LEFT)
-        self.bg_threshold_var = self._create_param_slider(frame, 1, 100, 16, 1, tk.IntVar, indicator="(Low=Sensitive)")
+        self._create_label_with_info(frame, "Det. Thresh:",
+                                    "Detection threshold for motion.\nLower values = more sensitive to subtle motion",
+                                    width=10, bg="#1e1e1e")
+        self.bg_threshold_var = self._create_param_slider(frame, 1, 100, 16, 1, tk.IntVar)
 
     def _create_motion_history_control(self, parent):
         frame = tk.Frame(parent, bg="#1e1e1e")
         frame.pack(fill=tk.X, pady=2)
-        tk.Label(frame, text="BG History:", bg="#1e1e1e", fg="white", width=10, anchor="w").pack(side=tk.LEFT)
-        self.bg_history_var = self._create_param_slider(frame, 10, 1000, 500, 10, tk.IntVar, indicator="(High=Stable)")
+        self._create_label_with_info(frame, "BG History:",
+                                    "Background history length.\nHigher values = more stable background model",
+                                    width=10, bg="#1e1e1e")
+        self.bg_history_var = self._create_param_slider(frame, 10, 1000, 500, 10, tk.IntVar)
 
     def _create_sensitivity_control(self, parent):
         frame1 = tk.Frame(parent, bg="#1e1e1e")
         frame1.pack(fill=tk.X, pady=2)
-        tk.Label(frame1, text="Min Size:", bg="#1e1e1e", fg="white", width=10, anchor="w").pack(side=tk.LEFT)
-        self.var_size = self._create_param_slider(frame1, 5, 5000, 300, 5, indicator="(Low=Tiny)")
-        
+        self._create_label_with_info(frame1, "Min Size:",
+                                    "Minimum blob size to detect.\nLower values = detect tiny blobs",
+                                    width=10, bg="#1e1e1e")
+        self.var_size = self._create_param_slider(frame1, 5, 5000, 300, 5)
+
         frame2 = tk.Frame(parent, bg="#1e1e1e")
         frame2.pack(fill=tk.X, pady=2)
-        tk.Label(frame2, text="Trigger:", bg="#1e1e1e", fg="white", width=10, anchor="w").pack(side=tk.LEFT)
-        self.var_trigger = self._create_param_slider(frame2, 0.0, 50.0, 2.0, 0.1, tk.DoubleVar, indicator="(Low=Sensitive)")
+        self._create_label_with_info(frame2, "Trigger:",
+                                    "Motion speed threshold to trigger notes.\nLower values = triggers with slower motion",
+                                    width=10, bg="#1e1e1e")
+        self.var_trigger = self._create_param_slider(frame2, 0.0, 50.0, 2.0, 0.1, tk.DoubleVar)
 
     def _create_blob_colors_control(self, parent):
         """Create color pickers for blob border states."""
@@ -1286,7 +1352,7 @@ class App:
         # Initialize color variables (BGR format for OpenCV)
         if not hasattr(self, 'blob_color_off'):
             self.blob_color_off = (0, 255, 0)      # Green - OFF state
-            self.blob_color_attack = (0, 165, 255) # Orange - ATTACK state
+            self.motion_border_color = (0, 255, 0) # Green - Detected motion border
             self.blob_color_on = (0, 0, 255)       # Red - ON state
 
         # Create color buttons for each state
@@ -1299,9 +1365,9 @@ class App:
         self._create_color_button(states_frame, "OFF", self.blob_color_off,
                                   lambda c: setattr(self, 'blob_color_off', c))
 
-        # ATTACK state (orange)
-        self._create_color_button(states_frame, "ATTACK", self.blob_color_attack,
-                                  lambda c: setattr(self, 'blob_color_attack', c))
+        # Detected motion border (green)
+        self._create_color_button(states_frame, "Motion", self.motion_border_color,
+                                  lambda c: setattr(self, 'motion_border_color', c))
 
         # ON state (red)
         self._create_color_button(states_frame, "ON", self.blob_color_on,
@@ -1361,13 +1427,17 @@ class App:
     def _create_velocity_range_control(self, parent):
         frame1 = tk.Frame(parent, bg="#1e1e1e")
         frame1.pack(fill=tk.X, pady=2)
-        tk.Label(frame1, text="Min:", bg="#1e1e1e", fg="white", width=10, anchor="w").pack(side=tk.LEFT)
-        self.var_vel_min = self._create_param_slider(frame1, 1, 127, 40, 1, indicator="(High=Loud)")
-        
+        self._create_label_with_info(frame1, "Min:",
+                                    "Minimum MIDI velocity.\nHigher values = louder quiet notes",
+                                    width=10, bg="#1e1e1e")
+        self.var_vel_min = self._create_param_slider(frame1, 1, 127, 40, 1)
+
         frame2 = tk.Frame(parent, bg="#1e1e1e")
         frame2.pack(fill=tk.X, pady=2)
-        tk.Label(frame2, text="Max:", bg="#1e1e1e", fg="white", width=10, anchor="w").pack(side=tk.LEFT)
-        self.var_vel_max = self._create_param_slider(frame2, 1, 127, 100, 1, indicator="(High=Loud)")
+        self._create_label_with_info(frame2, "Max:",
+                                    "Maximum MIDI velocity.\nHigher values = louder loud notes",
+                                    width=10, bg="#1e1e1e")
+        self.var_vel_max = self._create_param_slider(frame2, 1, 127, 100, 1)
 
     def _create_velocity_curve_control(self, parent):
         frame = tk.Frame(parent, bg="#1e1e1e")
@@ -1627,6 +1697,10 @@ class App:
             ("CC Smoothing", lambda p: self._create_cc_smoothing_control(p, channel_idx, cfg)),
         ])
 
+        self._create_channel_section(content, "Arpeggiator", [
+            ("Mode", lambda p: self._create_arp_mode_control(p, channel_idx, cfg)),
+        ])
+
         ui_widgets = {
             "name_entry": name_entry,
             "container": ch_frame,
@@ -1743,10 +1817,11 @@ class App:
     def _create_probability_control(self, parent, channel_idx, cfg):
         frame = tk.Frame(parent, bg="#2b2b2b")
         frame.pack(fill=tk.X, pady=2)
-        tk.Label(frame, text="Probability:", bg="#2b2b2b", fg="white", width=15, anchor="w").pack(side=tk.LEFT)
+        self._create_label_with_info(frame, "Probability:",
+                                    "Chance of triggering a note on this channel.\nLower values = more sparse/random triggering",
+                                    width=15)
         self._create_param_slider(frame, 0, 100, cfg.probability, 1,
-                                 callback=lambda v: setattr(cfg, 'probability', int(float(v))),
-                                 indicator="(Low=Sparse)")
+                                 callback=lambda v: setattr(cfg, 'probability', int(float(v))))
 
     def _create_modwheel_control(self, parent, channel_idx, cfg):
         """Create modwheel depth control with enable/disable."""
@@ -1763,7 +1838,9 @@ class App:
         cb.pack(side=tk.LEFT, padx=5)
 
         # Depth slider (0-127)
-        tk.Label(frame, text="Depth:", bg="#2b2b2b", fg="white", width=7).pack(side=tk.LEFT)
+        self._create_label_with_info(frame, "Depth:",
+                                    "Modwheel (CC1) modulation depth.\nControlled by blob X position",
+                                    width=7)
         self._create_param_slider(frame, 0, 127, cfg.modwheel_depth, 1,
                                   callback=lambda v: setattr(cfg, 'modwheel_depth', int(float(v))))
 
@@ -1782,7 +1859,9 @@ class App:
         cb.pack(side=tk.LEFT, padx=5)
 
         # Depth slider (0.0-1.0, display as percentage or semitones)
-        tk.Label(frame, text="Depth:", bg="#2b2b2b", fg="white", width=7).pack(side=tk.LEFT)
+        self._create_label_with_info(frame, "Depth:",
+                                    "Pitchbend modulation depth.\nControlled by blob Y position",
+                                    width=7)
 
         # Scale 0-100 slider to 0.0-1.0 internally
         depth_percentage = int(cfg.pitchbend_depth * 100)
@@ -1798,13 +1877,35 @@ class App:
         """Create CC smoothing (laziness) control."""
         frame = tk.Frame(parent, bg="#2b2b2b")
         frame.pack(fill=tk.X, pady=2)
-        tk.Label(frame, text="Laziness:", bg="#2b2b2b", fg="white", width=15, anchor="w").pack(side=tk.LEFT)
+        self._create_label_with_info(frame, "Laziness:",
+                                    "CC smoothing amount (modwheel, pan, filter, volume).\nHigher values = slower, smoother CC changes",
+                                    width=15)
 
         # Scale 0-100 slider to 0.0-1.0 internally
         smoothing_percentage = int(cfg.cc_smoothing * 100)
         self._create_param_slider(frame, 0, 100, smoothing_percentage, 1,
-                                 callback=lambda v: setattr(cfg, 'cc_smoothing', float(v) / 100.0),
-                                 indicator="% (0=instant)")
+                                 callback=lambda v: setattr(cfg, 'cc_smoothing', float(v) / 100.0))
+
+    def _create_arp_mode_control(self, parent, channel_idx, cfg):
+        """Create arpeggiator mode dropdown."""
+        frame = tk.Frame(parent, bg="#2b2b2b")
+        frame.pack(fill=tk.X, pady=2)
+
+        tk.Label(frame, text="Arp Mode:", bg="#2b2b2b", fg="white",
+                 width=15, anchor="w").pack(side=tk.LEFT)
+
+        modes = ["OFF", "UP", "DOWN", "UP-DOWN", "RANDOM"]
+        mode_var = tk.StringVar(value=cfg.arp_mode)
+
+        mode_cb = ttk.Combobox(frame, textvariable=mode_var, values=modes,
+                               state="readonly", width=12)
+        mode_cb.bind("<<ComboboxSelected>>",
+                    lambda e: setattr(cfg, 'arp_mode', mode_var.get()))
+        mode_cb.pack(side=tk.LEFT, padx=5)
+
+        # Info label
+        tk.Label(frame, text="(triggers on each note event)",
+                 bg="#2b2b2b", fg="#888888", font=("Arial", 8)).pack(side=tk.LEFT, padx=5)
 
     def _create_note_min_control(self, parent, channel_idx, cfg):
         frame = tk.Frame(parent, bg="#2b2b2b")
@@ -1847,29 +1948,35 @@ class App:
     def _create_velocity_control(self, parent, channel_idx, cfg):
         frame1 = tk.Frame(parent, bg="#2b2b2b")
         frame1.pack(fill=tk.X, pady=2)
-        tk.Label(frame1, text="Min Velocity:", bg="#2b2b2b", fg="white", width=15, anchor="w").pack(side=tk.LEFT)
-        self._create_param_slider(frame1, 1, 127, cfg.min_velocity, 1, callback=lambda v: setattr(cfg, 'min_velocity', int(float(v))), indicator="(High=Loud)")
-        
+        self._create_label_with_info(frame1, "Min Velocity:",
+                                    "Minimum MIDI velocity for this channel.\nHigher values = louder quiet notes",
+                                    width=15)
+        self._create_param_slider(frame1, 1, 127, cfg.min_velocity, 1, callback=lambda v: setattr(cfg, 'min_velocity', int(float(v))))
+
         frame2 = tk.Frame(parent, bg="#2b2b2b")
         frame2.pack(fill=tk.X, pady=2)
-        tk.Label(frame2, text="Max Velocity:", bg="#2b2b2b", fg="white", width=15, anchor="w").pack(side=tk.LEFT)
-        self._create_param_slider(frame2, 1, 127, cfg.max_velocity, 1, callback=lambda v: setattr(cfg, 'max_velocity', int(float(v))), indicator="(High=Loud)")
+        self._create_label_with_info(frame2, "Max Velocity:",
+                                    "Maximum MIDI velocity for this channel.\nHigher values = louder loud notes",
+                                    width=15)
+        self._create_param_slider(frame2, 1, 127, cfg.max_velocity, 1, callback=lambda v: setattr(cfg, 'max_velocity', int(float(v))))
 
     def _create_min_duration_control(self, parent, channel_idx, cfg):
         frame = tk.Frame(parent, bg="#2b2b2b")
         frame.pack(fill=tk.X, pady=2)
-        tk.Label(frame, text="Min Duration:", bg="#2b2b2b", fg="white", width=15, anchor="w").pack(side=tk.LEFT)
+        self._create_label_with_info(frame, "Min Duration:",
+                                    "Minimum note duration in milliseconds.\n0 = disabled (notes release immediately when motion stops)",
+                                    width=15)
         self._create_param_slider(frame, 0, 5000, cfg.min_note_duration, 10,
-                                 callback=lambda v: setattr(cfg, 'min_note_duration', int(float(v))),
-                                 indicator="ms (0=off)")
+                                 callback=lambda v: setattr(cfg, 'min_note_duration', int(float(v))))
 
     def _create_duration_deviation_control(self, parent, channel_idx, cfg):
         frame = tk.Frame(parent, bg="#2b2b2b")
         frame.pack(fill=tk.X, pady=2)
-        tk.Label(frame, text="Deviation:", bg="#2b2b2b", fg="white", width=15, anchor="w").pack(side=tk.LEFT)
+        self._create_label_with_info(frame, "Deviation:",
+                                    "Random duration variation (±ms).\nAdds humanization to note lengths",
+                                    width=15)
         self._create_param_slider(frame, 0, 1000, cfg.duration_deviation, 10,
-                                 callback=lambda v: setattr(cfg, 'duration_deviation', int(float(v))),
-                                 indicator="ms (±)")
+                                 callback=lambda v: setattr(cfg, 'duration_deviation', int(float(v))))
 
     def _create_color_filter_control(self, parent, channel_idx, cfg):
         frame = tk.Frame(parent, bg="#2b2b2b")
@@ -2084,6 +2191,12 @@ class App:
                 "min_velocity": self.var_vel_min.get(),
                 "max_velocity": self.var_vel_max.get(),
                 "velocity_curve": self.vel_curve_var.get(),
+                "brightness": self.var_brightness.get(),
+                "contrast": self.var_contrast.get(),
+                # Blob color settings (BGR format)
+                "blob_color_off": getattr(self, 'blob_color_off', (0, 255, 0)),
+                "motion_border_color": getattr(self, 'motion_border_color', (0, 255, 0)),
+                "blob_color_on": getattr(self, 'blob_color_on', (0, 0, 255)),
             },
             "channels": [cfg.to_dict() for cfg in self.channel_configs]
         }
@@ -2135,12 +2248,24 @@ class App:
 
         self.bg_threshold_var.set(params.get("bg_threshold", 25))
         self.bg_history_var.set(params.get("bg_history", 500))
-        
+
         self.vel_mode_var.set(params.get("velocity_mode", "Fixed"))
         self.var_vel_min.set(params.get("min_velocity", 40))
         self.var_vel_max.set(params.get("max_velocity", 100))
         self.vel_curve_var.set(params.get("velocity_curve", "Linear"))
-        
+
+        # Load brightness and contrast
+        self.var_brightness.set(params.get("brightness", 0))
+        self.var_contrast.set(params.get("contrast", 100))
+
+        # Load blob color settings (BGR format)
+        if "blob_color_off" in params:
+            self.blob_color_off = tuple(params["blob_color_off"])
+        if "motion_border_color" in params:
+            self.motion_border_color = tuple(params["motion_border_color"])
+        if "blob_color_on" in params:
+            self.blob_color_on = tuple(params["blob_color_on"])
+
         for ui_data in list(self.active_channel_uis):
              ui_data["widgets"]["container"].destroy()
         self.active_channel_uis = []
@@ -2242,8 +2367,8 @@ class App:
 
                     # Trigger notes immediately on all locked channels (independent probability)
                     for cfg in b.channel_configs:
-                        # Per-channel probability gate
-                        if random.randint(0, 100) < cfg.probability:
+                        # Per-channel probability gate (0-100)
+                        if random.randint(1, 100) <= cfg.probability:
                             channel_notes = self._generate_channel_notes(cfg)
 
                             # Check if arpeggiator is active for this channel
@@ -2263,14 +2388,39 @@ class App:
                                                          blend=0.5, size_range=(self.var_size.get(), 5000),
                                                          speed_range=(0, 50))
 
+                            # Send initial CC values BEFORE note-on to prevent jitter
+                            # Initialize smoothed CC storage for this config if needed
+                            if cfg.config_id not in b.smoothed_cc_values:
+                                b.smoothed_cc_values[cfg.config_id] = {}
+
+                            # Initialize CC tracking for this channel if needed
+                            if cfg.midi_channel not in self.last_sent_cc:
+                                self.last_sent_cc[cfg.midi_channel] = {}
+
+                            # Send last-known CC values to ensure smooth continuation
+                            # Modwheel (CC1)
+                            if cfg.modwheel_enabled and 1 in self.last_sent_cc[cfg.midi_channel]:
+                                self.midi.send_cc(cfg.midi_channel, 1, self.last_sent_cc[cfg.midi_channel][1])
+
+                            # Pan (CC10)
+                            if 10 in self.last_sent_cc[cfg.midi_channel]:
+                                self.midi.send_cc(cfg.midi_channel, 10, self.last_sent_cc[cfg.midi_channel][10])
+
+                            # Volume (CC11)
+                            if 11 in self.last_sent_cc[cfg.midi_channel]:
+                                self.midi.send_cc(cfg.midi_channel, 11, self.last_sent_cc[cfg.midi_channel][11])
+
+                            # Filter (CC74)
+                            if 74 in self.last_sent_cc[cfg.midi_channel]:
+                                self.midi.send_cc(cfg.midi_channel, 74, self.last_sent_cc[cfg.midi_channel][74])
+
+                            # Pitchbend
+                            if cfg.pitchbend_enabled and cfg.midi_channel in self.last_sent_pitchbend:
+                                self.midi.send_pitchbend(cfg.midi_channel, self.last_sent_pitchbend[cfg.midi_channel])
+
                             self.midi.note_on(cfg.midi_channel, target, velocity)
                             b.playing_notes[cfg.config_id] = target
                             b.note_start_times[cfg.config_id] = time.time()  # Track start time for duration enforcement
-
-                            # Reset smoothed CC values for this channel to prevent flickering
-                            # when retriggering with different modulation values
-                            if cfg.config_id in b.smoothed_cc_values:
-                                del b.smoothed_cc_values[cfg.config_id]
 
                             # Initialize arpeggiator state if enabled
                             if cfg.arp_mode != "OFF":
@@ -2324,12 +2474,26 @@ class App:
                                 # Helper to smooth a CC value with time-based exponential filter
                                 def smooth_cc(cc_num, target_value):
                                     if cc_num not in b.smoothed_cc_values[cfg.config_id]:
-                                        b.smoothed_cc_values[cfg.config_id][cc_num] = float(target_value)
-                                    else:
-                                        current = b.smoothed_cc_values[cfg.config_id][cc_num]
-                                        # Time-based exponential smoothing
-                                        b.smoothed_cc_values[cfg.config_id][cc_num] = current + alpha * (target_value - current)
-                                    return int(b.smoothed_cc_values[cfg.config_id][cc_num])
+                                        # Initialize to last-sent value for this channel, or 0 if never sent
+                                        if cfg.midi_channel not in self.last_sent_cc:
+                                            self.last_sent_cc[cfg.midi_channel] = {}
+
+                                        last_value = self.last_sent_cc[cfg.midi_channel].get(cc_num, 0)
+                                        b.smoothed_cc_values[cfg.config_id][cc_num] = float(last_value)
+
+                                    # Always smooth toward target
+                                    current = b.smoothed_cc_values[cfg.config_id][cc_num]
+                                    # Time-based exponential smoothing
+                                    b.smoothed_cc_values[cfg.config_id][cc_num] = current + alpha * (target_value - current)
+
+                                    smoothed_value = int(b.smoothed_cc_values[cfg.config_id][cc_num])
+                                    # Clamp to valid MIDI CC range
+                                    smoothed_value = max(0, min(127, smoothed_value))
+
+                                    # Track last-sent value globally
+                                    self.last_sent_cc[cfg.midi_channel][cc_num] = smoothed_value
+
+                                    return smoothed_value
 
                                 # Modulation CC
                                 if cfg.modwheel_enabled and cfg.modwheel_depth > 0:
@@ -2339,13 +2503,23 @@ class App:
 
                                 if cfg.pitchbend_enabled and cfg.pitchbend_depth > 0:
                                     pitchbend_val = calculate_modulation(b, lfo_val, "pitchbend", cfg.pitchbend_depth)
-                                    # Pitchbend smoothing using same alpha
+
                                     if 'pitchbend' not in b.smoothed_cc_values[cfg.config_id]:
-                                        b.smoothed_cc_values[cfg.config_id]['pitchbend'] = float(pitchbend_val)
-                                    else:
-                                        current_pb = b.smoothed_cc_values[cfg.config_id]['pitchbend']
-                                        b.smoothed_cc_values[cfg.config_id]['pitchbend'] = current_pb + alpha * (pitchbend_val - current_pb)
+                                        # Initialize to last-sent pitchbend for this channel, or 0 (center) if never sent
+                                        last_pb = self.last_sent_pitchbend.get(cfg.midi_channel, 0)
+                                        b.smoothed_cc_values[cfg.config_id]['pitchbend'] = float(last_pb)
+
+                                    # Always smooth toward target
+                                    current_pb = b.smoothed_cc_values[cfg.config_id]['pitchbend']
+                                    b.smoothed_cc_values[cfg.config_id]['pitchbend'] = current_pb + alpha * (pitchbend_val - current_pb)
+
                                     smoothed_pitchbend = int(b.smoothed_cc_values[cfg.config_id]['pitchbend'])
+                                    # Clamp to valid pitchbend range
+                                    smoothed_pitchbend = max(-8192, min(8191, smoothed_pitchbend))
+
+                                    # Track last-sent pitchbend globally
+                                    self.last_sent_pitchbend[cfg.midi_channel] = smoothed_pitchbend
+
                                     self.midi.send_pitchbend(cfg.midi_channel, smoothed_pitchbend)
 
                                 # Positional CC with smoothing
@@ -2371,7 +2545,7 @@ class App:
                             if cfg.min_note_duration > 0 and cfg.config_id in b.note_start_times:
                                 # Calculate required duration with random deviation
                                 deviation = random.uniform(-cfg.duration_deviation, cfg.duration_deviation)
-                                required_duration = (cfg.min_note_duration + deviation) / 1000.0  # Convert ms to seconds
+                                required_duration = max(0.0, (cfg.min_note_duration + deviation) / 1000.0)  # Convert ms to seconds, clamp to 0
 
                                 elapsed = current_time - b.note_start_times[cfg.config_id]
                                 if elapsed < required_duration:
@@ -2391,6 +2565,9 @@ class App:
                         del b.playing_notes[config_id]
                         if config_id in b.note_start_times:
                             del b.note_start_times[config_id]
+                        # Cleanup arpeggiator state
+                        if config_id in b.arp_states:
+                            del b.arp_states[config_id]
 
                     # Only transition to OFF if all notes have been released
                     if not b.playing_notes:
@@ -2450,7 +2627,9 @@ class App:
                         cx, cy = 0, 0
                     dets.append((cx, cy, area))
                     hull = cv2.convexHull(c)
-                    cv2.drawContours(frame, [hull], -1, (0, 255, 0), 1)
+                    # Use customizable motion border color
+                    motion_color = getattr(self, 'motion_border_color', (0, 255, 0))
+                    cv2.drawContours(frame, [hull], -1, motion_color, 1)
 
             self.track_blobs(dets)
             if self.midi_active:
