@@ -794,10 +794,16 @@ class PresetManager:
 
     def load_preset(self, filename: str) -> Optional[dict]:
         try:
-            path = os.path.join(self.preset_dir, filename)
+            # Handle both absolute paths and simple filenames
+            if os.path.isabs(filename):
+                path = filename
+                self.current_preset = os.path.basename(filename)
+            else:
+                path = os.path.join(self.preset_dir, filename)
+                self.current_preset = filename
+
             with open(path, 'r') as f:
                 data = json.load(f)
-                self.current_preset = filename
                 return data
         except Exception as e:
             print(f"Error loading preset {filename}: {e}")
@@ -3271,7 +3277,8 @@ class App:
     def load_preset(self):
         name = filedialog.askopenfilename(initialdir="./presets", filetypes=[("JSON", "*.json")])
         if name:
-            preset_data = self.preset_manager.load_preset(os.path.basename(name))
+            # Pass the full path to load_preset - it will handle both absolute and relative paths
+            preset_data = self.preset_manager.load_preset(name)
             if preset_data:
                 self.apply_preset(preset_data)
 
